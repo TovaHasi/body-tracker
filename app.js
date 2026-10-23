@@ -1,32 +1,32 @@
 // ---------- Constants ----------
 
 const METRICS = [
-  { key: 'weight', title: 'Вес', unit: 'кг' },
-  { key: 'bodyFat', title: 'Жир', unit: '%' },
-  { key: 'neck', title: 'Шея', unit: 'см' },
-  { key: 'shoulders', title: 'Плечи', unit: 'см' },
-  { key: 'chest', title: 'Грудь', unit: 'см' },
-  { key: 'biceps', title: 'Бицепс', unit: 'см' },
-  { key: 'forearm', title: 'Предплечье', unit: 'см' },
-  { key: 'waist', title: 'Талия', unit: 'см' },
-  { key: 'hips', title: 'Ягодицы', unit: 'см' },
-  { key: 'thigh', title: 'Бедро', unit: 'см' },
-  { key: 'calf', title: 'Икра', unit: 'см' },
+  { key: 'weight', title: 'Weight', unit: 'kg' },
+  { key: 'bodyFat', title: 'Body fat', unit: '%' },
+  { key: 'neck', title: 'Neck', unit: 'cm' },
+  { key: 'shoulders', title: 'Shoulders', unit: 'cm' },
+  { key: 'chest', title: 'Chest', unit: 'cm' },
+  { key: 'biceps', title: 'Biceps', unit: 'cm' },
+  { key: 'forearm', title: 'Forearm', unit: 'cm' },
+  { key: 'waist', title: 'Waist', unit: 'cm' },
+  { key: 'hips', title: 'Hips', unit: 'cm' },
+  { key: 'thigh', title: 'Thigh', unit: 'cm' },
+  { key: 'calf', title: 'Calf', unit: 'cm' },
 ];
 const METRIC = Object.fromEntries(METRICS.map((m) => [m.key, m]));
 
 const RANGES = [
-  { key: '1m', label: '1М', months: 1 },
-  { key: '3m', label: '3М', months: 3 },
-  { key: '6m', label: '6М', months: 6 },
-  { key: '1y', label: '1Г', months: 12 },
-  { key: 'all', label: 'Всё', months: null },
+  { key: '1m', label: '1M', months: 1 },
+  { key: '3m', label: '3M', months: 3 },
+  { key: '6m', label: '6M', months: 6 },
+  { key: '1y', label: '1Y', months: 12 },
+  { key: 'all', label: 'All', months: null },
 ];
 
 const TABS = [
-  { key: 'progress', title: 'Прогресс', icon: 'chart' },
-  { key: 'history', title: 'Замеры', icon: 'list' },
-  { key: 'photos', title: 'Фото', icon: 'photo' },
+  { key: 'progress', title: 'Progress', icon: 'chart' },
+  { key: 'history', title: 'Log', icon: 'list' },
+  { key: 'photos', title: 'Photos', icon: 'photo' },
 ];
 
 const ICONS = {
@@ -52,15 +52,15 @@ const toTime = (iso) => {
   return new Date(y, m - 1, d).getTime();
 };
 
-const nf = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
-const nfSigned = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1, signDisplay: 'exceptZero' });
+const nf = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
+const nfSigned = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, signDisplay: 'exceptZero' });
 const fmt = (v) => nf.format(v);
 const fmtSigned = (v) => nfSigned.format(v);
 const stripYear = (s) => s.replace(/\s+г\.$/, '');
 const fmtDate = (iso) =>
-  stripYear(new Date(toTime(iso)).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }));
+  stripYear(new Date(toTime(iso)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }));
 const fmtDateShort = (iso) =>
-  stripYear(new Date(toTime(iso)).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }));
+  stripYear(new Date(toTime(iso)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
 
 function parseNum(text) {
   const s = String(text ?? '').trim().replace(',', '.');
@@ -265,7 +265,7 @@ function sparkline(pts) {
 
 function mountChart(el, pts, onSelect) {
   if (!pts.length) {
-    el.innerHTML = '<div class="chart-empty">Нет данных за период</div>';
+    el.innerHTML = '<div class="chart-empty">No data for this period</div>';
     return;
   }
   const w = el.clientWidth;
@@ -326,17 +326,17 @@ function mountChart(el, pts, onSelect) {
 
 // ---------- Views ----------
 
-const plusButton = '<button class="tb-btn" data-action="new-entry" aria-label="Новый замер">' + ICONS.plus + '</button>';
+const plusButton = '<button class="tb-btn" data-action="new-entry" aria-label="New entry">' + ICONS.plus + '</button>';
 
 function emptyState(title, text) {
   return `<div class="empty">${ICONS.ruler}<h2>${title}</h2><p>${text}</p>
-    <button class="pill" data-action="new-entry">Добавить замер</button></div>`;
+    <button class="pill" data-action="new-entry">Add entry</button></div>`;
 }
 
 function viewProgress() {
   const metrics = METRICS.filter((m) => state.entries.some((e) => e.values[m.key] != null));
   if (!metrics.length) {
-    return { title: 'Прогресс', large: true, actions: plusButton, body: emptyState('Нет замеров', 'Добавь первый замер, чтобы видеть прогресс') };
+    return { title: 'Progress', large: true, actions: plusButton, body: emptyState('No entries yet', 'Add your first measurements to start tracking') };
   }
   const rows = metrics.map((m) => {
     const pts = points(m.key);
@@ -346,13 +346,13 @@ function viewProgress() {
       <div class="grow">
         <div class="mr-title">${m.title}</div>
         <div class="mr-value">${fmt(last.v)}<span class="unit">${m.unit}</span></div>
-        ${delta != null ? `<div class="mr-delta">${fmtSigned(delta)} ${m.unit} с начала</div>` : ''}
+        ${delta != null ? `<div class="mr-delta">${fmtSigned(delta)} ${m.unit} since start</div>` : ''}
       </div>
       ${pts.length > 1 ? sparkline(pts) : ''}
       <span class="chev"></span>
     </button>`;
   });
-  return { title: 'Прогресс', large: true, actions: plusButton, body: `<div class="group">${rows.join('')}</div>` };
+  return { title: 'Progress', large: true, actions: plusButton, body: `<div class="group">${rows.join('')}</div>` };
 }
 
 function viewMetric(key) {
@@ -361,7 +361,7 @@ function viewMetric(key) {
   const pts = inRange(all, state.range);
   const last = pts[pts.length - 1];
   const change = pts.length > 1 ? last.v - pts[0].v : null;
-  const changeText = change != null ? `${fmtSigned(change)} ${m.unit} за период` : '';
+  const changeText = change != null ? `${fmtSigned(change)} ${m.unit} this period` : '';
 
   const body = `
     <div class="group detail">
@@ -373,7 +373,7 @@ function viewMetric(key) {
         ${RANGES.map((r) => `<button data-action="range" data-range="${r.key}" class="${r.key === state.range ? 'on' : ''}">${r.label}</button>`).join('')}
       </div>
     </div>
-    <div class="group-title">История</div>
+    <div class="group-title">History</div>
     <div class="group">
       ${[...all].reverse().map((p) => `
         <button class="row" data-action="edit-entry" data-id="${p.entry.id}">
@@ -396,19 +396,19 @@ function viewMetric(key) {
 function viewHistory() {
   const lastExport = Number(localStorage.getItem('lastExport')) || null;
   const backup = `
-    <div class="group-title">Бэкап</div>
+    <div class="group-title">Backup</div>
     <div class="group">
-      <button class="row action" data-action="export">Экспортировать данные</button>
-      <label class="row action">Импортировать из файла
+      <button class="row action" data-action="export">Export data</button>
+      <label class="row action">Import from file
         <input type="file" accept=".json,application/json" hidden data-import>
       </label>
     </div>
-    <div class="group-foot">Данные хранятся только на этом телефоне. Время от времени сохраняй бэкап в Файлы или iCloud.
-      ${lastExport ? `Последний бэкап: ${fmtDate(isoDate(new Date(lastExport)))}.` : ''}</div>`;
+    <div class="group-foot">Your data lives only on this phone. Save a backup to Files or iCloud from time to time.
+      ${lastExport ? `Last backup: ${fmtDate(isoDate(new Date(lastExport)))}.` : ''}</div>`;
 
   const entries = entriesDesc();
   if (!entries.length) {
-    return { title: 'Замеры', large: true, actions: plusButton, body: emptyState('Нет замеров', 'Здесь будет история всех замеров') + '<div style="height:32px"></div>' + backup };
+    return { title: 'Log', large: true, actions: plusButton, body: emptyState('No entries yet', 'All your measurements will show up here') + '<div style="height:32px"></div>' + backup };
   }
   const rows = entries.map((e) => {
     const summary = METRICS.filter((m) => e.values[m.key] != null)
@@ -424,7 +424,7 @@ function viewHistory() {
       ${photo ? `<img class="er-thumb" src="${thumbUrl(photo)}" alt="">` : ''}
     </button>`;
   });
-  return { title: 'Замеры', large: true, actions: plusButton, body: `<div class="group">${rows.join('')}</div>${backup}` };
+  return { title: 'Log', large: true, actions: plusButton, body: `<div class="group">${rows.join('')}</div>${backup}` };
 }
 
 function photoEntriesDesc() {
@@ -434,7 +434,7 @@ function photoEntriesDesc() {
 function viewPhotos() {
   const groups = photoEntriesDesc();
   if (!groups.length) {
-    return { title: 'Фото', large: true, body: emptyState('Нет фото', 'Прикрепляй фото к замерам, чтобы видеть изменения') };
+    return { title: 'Photos', large: true, body: emptyState('No photos yet', 'Attach photos to entries to see your progress') };
   }
   const total = groups.reduce((n, e) => n + photosOf(e.id).length, 0);
   const body = groups.map((e) => `
@@ -442,8 +442,8 @@ function viewPhotos() {
     <div class="ph-grid">
       ${photosOf(e.id).map((p) => `<button class="ph-cell" data-action="open-photo" data-id="${p.id}"><img src="${thumbUrl(p)}" loading="lazy" alt=""></button>`).join('')}
     </div>`).join('');
-  const actions = total > 1 ? '<button class="tb-btn" data-action="compare">Сравнить</button>' : '';
-  return { title: 'Фото', large: true, actions, body };
+  const actions = total > 1 ? '<button class="tb-btn" data-action="compare">Compare</button>' : '';
+  return { title: 'Photos', large: true, actions, body };
 }
 
 function currentView() {
@@ -455,7 +455,7 @@ function currentView() {
 function render() {
   const view = currentView();
   const back = view.back
-    ? `<button class="tb-btn back" data-action="back">${ICONS.back}<span>Прогресс</span></button>`
+    ? `<button class="tb-btn back" data-action="back">${ICONS.back}<span>Progress</span></button>`
     : '';
   $('#app').innerHTML = `
     <header class="topbar ${view.large ? 'flat' : ''}">
@@ -504,37 +504,37 @@ function openEditor(entry) {
   el.className = 'sheet';
   el.innerHTML = `
     <div class="sheet-bar">
-      <button class="tb-btn" data-e="cancel">Отмена</button>
-      <div class="tb-title">${entry ? 'Замер' : 'Новый замер'}</div>
-      <button class="tb-btn" data-e="save">Сохранить</button>
+      <button class="tb-btn" data-e="cancel">Cancel</button>
+      <div class="tb-title">${entry ? 'Entry' : 'New entry'}</div>
+      <button class="tb-btn" data-e="save">Save</button>
     </div>
     <div class="sheet-body">
       <div class="group">
-        <label class="row field"><span class="grow">Дата</span><input type="date" value="${entry?.date ?? today()}" data-date></label>
+        <label class="row field"><span class="grow">Date</span><input type="date" value="${entry?.date ?? today()}" data-date></label>
       </div>
-      <div class="group-title">Замеры</div>
+      <div class="group-title">Measurements</div>
       <div class="group">
         ${METRICS.map((m) => `
           <label class="row field">
             <span class="grow">${m.title}</span>
             <input inputmode="decimal" autocomplete="off" data-m="${m.key}"
-              value="${entry?.values[m.key] != null ? String(entry.values[m.key]).replace('.', ',') : ''}"
+              value="${entry?.values[m.key] != null ? String(entry.values[m.key]) : ''}"
               placeholder="${previous?.values[m.key] != null ? fmt(previous.values[m.key]) : '—'}">
             <span class="unit">${m.unit}</span>
           </label>`).join('')}
       </div>
-      <div class="group-title">Фото</div>
+      <div class="group-title">Photos</div>
       <div class="group">
         <div class="strip" hidden></div>
-        <label class="row action">Добавить фото
+        <label class="row action">Add photos
           <input type="file" accept="image/*" multiple hidden data-photos>
         </label>
       </div>
-      <div class="group-title">Заметка</div>
+      <div class="group-title">Note</div>
       <div class="group">
-        <textarea class="note" rows="2" placeholder="Необязательно" data-note>${esc(entry?.note ?? '')}</textarea>
+        <textarea class="note" rows="2" placeholder="Optional" data-note>${esc(entry?.note ?? '')}</textarea>
       </div>
-      ${entry ? '<div class="group"><button class="row danger" data-e="delete">Удалить замер</button></div>' : ''}
+      ${entry ? '<div class="group"><button class="row danger" data-e="delete">Delete entry</button></div>' : ''}
     </div>`;
 
   const strip = $('.strip', el);
@@ -552,7 +552,7 @@ function openEditor(entry) {
       photos.map((p) => `
         <div class="strip-item">
           <img src="${p.url}" alt="">
-          <button class="strip-remove" data-e="remove-photo" data-id="${p.id}" aria-label="Убрать">${ICONS.close}</button>
+          <button class="strip-remove" data-e="remove-photo" data-id="${p.id}" aria-label="Remove">${ICONS.close}</button>
         </div>`).join('') +
       '<div class="strip-item loading"></div>'.repeat(pending);
     updateSave();
@@ -581,7 +581,7 @@ function openEditor(entry) {
           url: URL.createObjectURL(new Blob([thumb], { type: 'image/jpeg' })),
         });
       } catch {
-        toast('Не удалось открыть фото');
+        toast('Couldn’t open photo');
       }
       pending -= 1;
       renderStrip();
@@ -638,7 +638,7 @@ function openEditor(entry) {
         });
       } catch (err) {
         console.error(err);
-        toast('Не удалось сохранить');
+        toast('Couldn’t save');
         updateSave();
         return;
       }
@@ -650,7 +650,7 @@ function openEditor(entry) {
     }
 
     if (action === 'delete') {
-      if (!confirm('Удалить этот замер вместе с фото?')) return;
+      if (!confirm('Delete this entry and its photos?')) return;
       const ids = photosOf(entry.id).map((p) => p.id);
       await write((s) => {
         s.entries.delete(entry.id);
@@ -717,7 +717,7 @@ function openViewer(startId) {
   const el = document.createElement('div');
   el.className = 'viewer';
   el.innerHTML = `
-    <div class="viewer-top"><span data-caption></span><button class="close" data-close aria-label="Закрыть">${ICONS.close}</button></div>
+    <div class="viewer-top"><span data-caption></span><button class="close" data-close aria-label="Close">${ICONS.close}</button></div>
     <div class="panes"><div class="pane"></div></div>
     <div class="caption"></div>`;
   const caption = $('[data-caption]', el);
@@ -735,7 +735,7 @@ function openCompare() {
   const el = document.createElement('div');
   el.className = 'viewer';
   el.innerHTML = `
-    <div class="viewer-top"><span>Листай каждую половину</span><button class="close" data-close aria-label="Закрыть">${ICONS.close}</button></div>
+    <div class="viewer-top"><span>Swipe each side</span><button class="close" data-close aria-label="Close">${ICONS.close}</button></div>
     <div class="panes"></div>`;
   const panes = $('.panes', el);
   const starts = [0, photos.length - 1];
@@ -787,12 +787,12 @@ async function exportData(button) {
       preparedExport = null;
       render();
     } catch (err) {
-      if (err.name !== 'AbortError') toast('Не удалось сохранить файл');
+      if (err.name !== 'AbortError') toast('Couldn’t save the file');
     }
     return;
   }
 
-  button.textContent = 'Готовлю файл…';
+  button.textContent = 'Preparing file…';
   button.disabled = true;
   try {
     const fulls = new Map((await getAll('fulls')).map((f) => [f.id, f.data]));
@@ -808,12 +808,12 @@ async function exportData(button) {
     }
     const payload = { app: 'body-tracker', version: 1, exportedAt: new Date().toISOString(), entries: state.entries, photos };
     preparedExport = new File([JSON.stringify(payload)], `body-tracker-${today()}.json`, { type: 'application/json' });
-    const mb = (preparedExport.size / 1024 / 1024).toFixed(1).replace('.', ',');
-    button.textContent = `Сохранить бэкап (${mb} МБ)`;
+    const mb = (preparedExport.size / 1024 / 1024).toFixed(1);
+    button.textContent = `Save backup (${mb} MB)`;
   } catch (err) {
     console.error(err);
-    button.textContent = 'Экспортировать данные';
-    toast('Не удалось подготовить бэкап');
+    button.textContent = 'Export data';
+    toast('Couldn’t prepare backup');
   }
   button.disabled = false;
 }
@@ -823,14 +823,14 @@ async function importData(file) {
   try {
     data = JSON.parse(await file.text());
   } catch {
-    toast('Это не файл бэкапа');
+    toast('That’s not a backup file');
     return;
   }
   if (data?.app !== 'body-tracker' || !Array.isArray(data.entries) || !Array.isArray(data.photos)) {
-    toast('Это не файл бэкапа');
+    toast('That’s not a backup file');
     return;
   }
-  if (!confirm(`Импортировать ${data.entries.length} замеров и ${data.photos.length} фото? Совпадающие записи будут заменены.`)) return;
+  if (!confirm(`Import ${data.entries.length} entries and ${data.photos.length} photos? Matching entries will be replaced.`)) return;
 
   try {
     const photos = [];
@@ -850,10 +850,10 @@ async function importData(file) {
     photos.forEach(({ meta }) => dropUrls(meta.id));
     await loadState();
     render();
-    toast('Готово');
+    toast('Imported');
   } catch (err) {
     console.error(err);
-    toast('Не удалось импортировать');
+    toast('Import failed');
   }
 }
 
@@ -910,7 +910,7 @@ async function start() {
     await loadState();
   } catch (err) {
     console.error(err);
-    $('#app').innerHTML = '<div class="empty"><h2>Хранилище недоступно</h2><p>Safari не дал доступ к данным. Не используй приватный режим.</p></div>';
+    $('#app').innerHTML = '<div class="empty"><h2>Storage unavailable</h2><p>Safari blocked access to storage. Don’t use Private Browsing.</p></div>';
     return;
   }
   render();

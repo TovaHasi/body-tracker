@@ -1,7 +1,7 @@
 {
-  "name": "Тело",
-  "short_name": "Тело",
-  "lang": "ru",
+  "name": "Body",
+  "short_name": "Body",
+  "lang": "en",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
