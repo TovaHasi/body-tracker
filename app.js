@@ -273,8 +273,11 @@ function scales(all, w, h, pad) {
   const t1 = Math.max(...ts);
   const x = (t) => (t1 === t0 ? pad.l + (w - pad.l - pad.r) / 2 : pad.l + ((t - t0) / (t1 - t0)) * (w - pad.l - pad.r));
   const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (h - pad.t - pad.b);
-  return { x, y, lo, hi };
+  return { x, y, lo, hi, t0, t1 };
 }
+
+const cameraMark = (cx, top) =>
+  `<g><rect x="${cx - 5.5}" y="${top}" width="11" height="8" rx="2" fill="var(--sec)"/><circle cx="${cx}" cy="${top + 4.2}" r="2" fill="var(--card)"/></g>`;
 
 function sparkline(series) {
   const w = 90;
@@ -287,7 +290,8 @@ function sparkline(series) {
   return `<svg class="spark" viewBox="0 0 ${w} ${h}">${paths}</svg>`;
 }
 
-function mountChart(el, series, onSelect) {
+/** photoDays: Map of day timestamp → photo; those days get a camera mark under the plot. */
+function mountChart(el, series, onSelect, photoDays = new Map()) {
   const all = series.flatMap((s) => s.pts);
   if (!all.length) {
     el.innerHTML = '<div class="chart-empty">No data for this period</div>';
@@ -295,9 +299,14 @@ function mountChart(el, series, onSelect) {
   }
   const w = el.clientWidth;
   const h = el.clientHeight;
-  const pad = { l: 6, r: 40, t: 10, b: 24 };
-  const { x, y, lo, hi } = scales(all, w, h, pad);
-  const times = [...new Set(all.map((p) => p.t))].sort((a, b) => a - b);
+  const pad = { l: 6, r: 40, t: 10, b: photoDays.size ? 36 : 24 };
+  const { x, y, lo, hi, t0, t1 } = scales(all, w, h, pad);
+  const photoTimes = [...photoDays.keys()].filter((t) => t >= t0 && t <= t1);
+  const dataTimes = [...new Set(all.map((p) => p.t))].sort((a, b) => a - b);
+  // Photo days are selectable too, even when this metric wasn't measured that day.
+  const times = [...new Set([...dataTimes, ...photoTimes])].sort((a, b) => a - b);
+  const camY = h - pad.b + 7;
+  const cams = photoTimes.map((t) => cameraMark(x(t), camY)).join('');
 
   const step = niceStep((hi - lo) / 3);
   const ticks = [];
@@ -308,8 +317,8 @@ function mountChart(el, series, onSelect) {
     .join('');
 
   const dateOf = (t) => isoDate(new Date(t));
-  const xLabels = `<text x="${pad.l}" y="${h - 4}">${fmtDateShort(dateOf(times[0]))}</text>` +
-    (times.length > 1 ? `<text x="${w - pad.r}" y="${h - 4}" text-anchor="end">${fmtDateShort(dateOf(times[times.length - 1]))}</text>` : '');
+  const xLabels = `<text x="${pad.l}" y="${h - 4}">${fmtDateShort(dateOf(dataTimes[0]))}</text>` +
+    (dataTimes.length > 1 ? `<text x="${w - pad.r}" y="${h - 4}" text-anchor="end">${fmtDateShort(dateOf(dataTimes[dataTimes.length - 1]))}</text>` : '');
 
   const marks = series.map((s) => {
     const xy = s.pts.map((p) => [x(p.t), y(p.v)]);
@@ -324,7 +333,7 @@ function mountChart(el, series, onSelect) {
     return line + dots;
   }).join('');
 
-  el.innerHTML = `<svg>${grid}${xLabels}${marks}<g class="sel"></g></svg>`;
+  el.innerHTML = `<svg>${grid}${xLabels}${cams}${marks}<g class="sel"></g></svg>`;
   const svg = el.querySelector('svg');
   const sel = el.querySelector('.sel');
 
@@ -401,7 +410,15 @@ function viewMetric(key) {
   const series = metricSeries(m, state.range);
   const all = series.flatMap((s) => s.pts);
   const latestT = all.length ? Math.max(...all.map((p) => p.t)) : null;
+  const firstT = all.length ? Math.min(...all.map((p) => p.t)) : null;
   const periodChange = changeText(m, series, 'this period');
+
+  const photoDays = new Map();
+  for (const e of entriesAsc()) {
+    const photo = photosOf(e.id)[0];
+    if (photo) photoDays.set(toTime(e.date), photo);
+  }
+  const photosInView = latestT != null && [...photoDays.keys()].some((t) => t >= firstT && t <= latestT);
 
   const blocks = series
     .map((s, i) => `
@@ -410,14 +427,19 @@ function viewMetric(key) {
         <div class="d-value"><span id="d-v${i}">—</span><span class="unit">${m.unit}</span></div>
       </div>`)
     .join('');
-  const legend = m.paired
-    ? `<div class="legend">${series.map((s) => `<span><i class="lg ${s.dashed ? 'dashed' : ''}"></i>${s.name}</span>`).join('')}</div>`
-    : '';
+  const legendItems = [
+    ...(m.paired ? series.map((s) => `<span><i class="lg ${s.dashed ? 'dashed' : ''}"></i>${s.name}</span>`) : []),
+    ...(photosInView ? [`<span><svg class="lg-cam" viewBox="0 0 12 9">${cameraMark(6, 0.5)}</svg>Photo day</span>`] : []),
+  ];
+  const legend = legendItems.length ? `<div class="legend">${legendItems.join('')}</div>` : '';
 
   const entries = entriesDesc().filter((e) => hasMetric(m, e));
   const body = `
     <div class="group detail">
-      <div class="d-blocks">${blocks}</div>
+      <div class="d-top">
+        <div class="d-blocks">${blocks}</div>
+        <button class="d-photo" id="d-photo" data-action="open-photo" aria-label="Open photo" hidden><img alt=""></button>
+      </div>
       <div class="d-sub" id="d-date"></div>
       <div class="d-sub" id="d-change"></div>
       <div class="chart" id="chart"></div>
@@ -428,11 +450,15 @@ function viewMetric(key) {
     </div>
     <div class="group-title">History</div>
     <div class="group">
-      ${entries.map((e) => `
+      ${entries.map((e) => {
+        const photo = photosOf(e.id)[0];
+        return `
         <button class="row" data-action="edit-entry" data-id="${e.id}">
           <span class="grow">${fmtDate(e.date)}</span>
           <span class="sec num">${metricText(m, e)}</span>
-        </button>`).join('')}
+          ${photo ? `<img class="h-thumb" src="${thumbUrl(photo)}" alt="Open photo" data-action="open-photo" data-id="${photo.id}">` : '<span class="h-thumb none"></span>'}
+        </button>`;
+      }).join('')}
     </div>`;
 
   // Shows the selected date, or the latest values when nothing is selected.
@@ -448,11 +474,18 @@ function viewMetric(key) {
     $('#d-date').textContent = when != null ? fmtDate(isoDate(new Date(when))) : '';
     const gap = m.paired && values.every((v) => v != null) ? `Difference ${fmt(Math.abs(values[0] - values[1]))} ${m.unit}` : '';
     $('#d-change').textContent = [t == null ? periodChange : '', gap].filter(Boolean).join(' · ');
+    const photo = when != null ? photoDays.get(when) : null;
+    const button = $('#d-photo');
+    button.hidden = !photo;
+    if (photo) {
+      button.dataset.id = photo.id;
+      button.querySelector('img').src = thumbUrl(photo);
+    }
   };
 
   const after = () => {
     show(null);
-    mountChart($('#chart'), series, show);
+    mountChart($('#chart'), series, show, photoDays);
   };
 
   return { title: m.title, back: true, body, after };
@@ -498,7 +531,7 @@ function viewHistory() {
         ${summary ? `<div class="er-sum num">${summary}</div>` : ''}
         ${e.note ? `<div class="er-sum">${esc(e.note)}</div>` : ''}
       </div>
-      ${photo ? `<img class="er-thumb" src="${thumbUrl(photo)}" alt="">` : ''}
+      ${photo ? `<img class="er-thumb" src="${thumbUrl(photo)}" alt="Open photo" data-action="open-photo" data-id="${photo.id}">` : ''}
     </button>`;
   });
   return { title: 'Log', large: true, actions: plusButton, body: `<div class="group">${rows.join('')}</div>${backup}` };
@@ -635,7 +668,7 @@ function openEditor(entry) {
     strip.innerHTML =
       photos.map((p) => `
         <div class="strip-item">
-          <img src="${p.url}" alt="">
+          <img src="${p.url}" alt="Open photo" data-e="view-photo" data-id="${p.id}">
           <button class="strip-remove" data-e="remove-photo" data-id="${p.id}" aria-label="Remove">${ICONS.close}</button>
         </div>`).join('') +
       '<div class="strip-item loading"></div>'.repeat(pending);
@@ -643,7 +676,10 @@ function openEditor(entry) {
   };
 
   const close = () => {
-    photos.filter((p) => !p.existing).forEach((p) => URL.revokeObjectURL(p.url));
+    photos.filter((p) => !p.existing).forEach((p) => {
+      URL.revokeObjectURL(p.url);
+      if (p.fullUrl) URL.revokeObjectURL(p.fullUrl);
+    });
     closeOverlay(el);
   };
 
@@ -678,6 +714,21 @@ function openEditor(entry) {
     const action = target.dataset.e;
 
     if (action === 'cancel') close();
+
+    if (action === 'view-photo') {
+      const date = fmtDate($('[data-date]', el).value || today());
+      const items = photos.map((p) => {
+        const saved = p.existing ? state.photos.find((x) => x.id === p.id) : null;
+        return {
+          key: p.id,
+          thumb: p.url,
+          full: async () => (saved ? fullUrl(p.id) : (p.fullUrl ??= URL.createObjectURL(new Blob([p.full], { type: 'image/jpeg' })))),
+          date,
+          photo: saved,
+        };
+      });
+      openViewer(items, photos.findIndex((p) => p.id === target.dataset.id));
+    }
 
     if (action === 'remove-photo') {
       e.preventDefault();
@@ -758,46 +809,176 @@ function openEditor(entry) {
 
 // ---------- Photo viewer & compare ----------
 
-/** Horizontal snap scroller; loads full-size images as slides come into view. */
-function buildScroller(photos, onIndex) {
-  const scroller = document.createElement('div');
-  scroller.className = 'scroller';
-  scroller.innerHTML = photos
-    .map((p) => `<div class="slide"><img src="${thumbUrl(p)}" data-id="${p.id}" alt=""></div>`)
-    .join('');
-
-  const observer = new IntersectionObserver(
-    (items) => {
-      for (const item of items) {
-        if (!item.isIntersecting) continue;
-        const img = item.target;
-        observer.unobserve(img);
-        fullUrl(img.dataset.id).then((url) => url && (img.src = url));
-      }
-    },
-    { root: scroller, rootMargin: '0px 100%' }
-  );
-  scroller.querySelectorAll('img').forEach((img) => observer.observe(img));
-
-  const index = () => Math.round(scroller.scrollLeft / Math.max(1, scroller.clientWidth));
-  scroller.addEventListener('scroll', () => onIndex(index()), { passive: true });
-
-  return {
-    scroller,
-    scrollTo: (i) => {
-      scroller.scrollLeft = i * scroller.clientWidth;
-      onIndex(i);
-    },
-  };
-}
-
+// A viewer item: { key, thumb: url, full: () => Promise<url>, date: string, photo?: saved photo record }.
 function photoDate(photo) {
   const entry = state.entries.find((e) => e.id === photo.entryId);
   return entry ? fmtDate(entry.date) : '';
 }
 
-function openViewer(startId) {
-  const photos = photoEntriesDesc().flatMap((e) => photosOf(e.id));
+const viewItem = (photo) => ({
+  key: photo.id,
+  thumb: thumbUrl(photo),
+  full: () => fullUrl(photo.id),
+  date: photoDate(photo),
+  photo,
+});
+
+/**
+ * Pinch to zoom, double-tap to toggle zoom, drag to pan while zoomed.
+ * Uses touch events because iOS starts the native swipe before a second pointer arrives.
+ */
+function enableZoom(slide, img, scroller) {
+  let s = 1;
+  let tx = 0;
+  let ty = 0;
+  let gesture = null;
+  let tap = null;
+  let lastTap = null;
+
+  const apply = (animate) => {
+    img.style.transition = animate ? 'transform 0.25s ease' : 'none';
+    img.style.transform = s === 1 ? '' : `translate(${tx}px, ${ty}px) scale(${s})`;
+    scroller.classList.toggle('zoomed', s > 1);
+  };
+  const clamp = () => {
+    const mx = Math.max(0, (img.offsetWidth * s - slide.clientWidth) / 2);
+    const my = Math.max(0, (img.offsetHeight * s - slide.clientHeight) / 2);
+    tx = Math.min(mx, Math.max(-mx, tx));
+    ty = Math.min(my, Math.max(-my, ty));
+  };
+  // Touch position relative to the slide's centre (the transform origin).
+  const rel = (t) => {
+    const r = slide.getBoundingClientRect();
+    return [t.clientX - r.left - r.width / 2, t.clientY - r.top - r.height / 2];
+  };
+  const pinchState = (touches) => {
+    const a = rel(touches[0]);
+    const b = rel(touches[1]);
+    return { d: Math.hypot(a[0] - b[0], a[1] - b[1]), mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
+  };
+  const reset = (animate) => {
+    s = 1;
+    tx = 0;
+    ty = 0;
+    apply(animate);
+  };
+
+  slide.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      tap = null;
+      gesture = { pinch: true, ...pinchState(e.touches), s, tx, ty };
+    } else if (e.touches.length === 1) {
+      const p = rel(e.touches[0]);
+      tap = { p, moved: false };
+      gesture = s > 1 ? { pinch: false, p, tx, ty } : null;
+    }
+  }, { passive: false });
+
+  slide.addEventListener('touchmove', (e) => {
+    if (tap && e.touches.length === 1) {
+      const p = rel(e.touches[0]);
+      if (Math.hypot(p[0] - tap.p[0], p[1] - tap.p[1]) > 10) tap.moved = true;
+    }
+    if (!gesture) return;
+    if (gesture.pinch && e.touches.length === 2) {
+      e.preventDefault();
+      const { d, mid } = pinchState(e.touches);
+      const next = Math.min(4, Math.max(1, (gesture.s * d) / gesture.d));
+      const k = next / gesture.s;
+      // Keep the point under the fingers fixed while scaling.
+      tx = mid[0] - (gesture.mid[0] - gesture.tx) * k;
+      ty = mid[1] - (gesture.mid[1] - gesture.ty) * k;
+      s = next;
+      clamp();
+      apply(false);
+    } else if (!gesture.pinch && s > 1 && e.touches.length === 1) {
+      e.preventDefault();
+      const p = rel(e.touches[0]);
+      tx = gesture.tx + p[0] - gesture.p[0];
+      ty = gesture.ty + p[1] - gesture.p[1];
+      clamp();
+      apply(false);
+    }
+  }, { passive: false });
+
+  slide.addEventListener('touchend', (e) => {
+    if (e.touches.length === 1 && gesture?.pinch) {
+      // One finger lifted after a pinch: continue as a pan.
+      gesture = s > 1 ? { pinch: false, p: rel(e.touches[0]), tx, ty } : null;
+      return;
+    }
+    if (e.touches.length) return;
+    if (gesture?.pinch && s < 1.05) reset(true);
+    if (tap && !tap.moved) {
+      const now = Date.now();
+      if (lastTap && now - lastTap.time < 300 && Math.hypot(tap.p[0] - lastTap.p[0], tap.p[1] - lastTap.p[1]) < 40) {
+        if (s > 1) {
+          reset(true);
+        } else {
+          s = 2.5;
+          tx = -tap.p[0] * (s - 1);
+          ty = -tap.p[1] * (s - 1);
+          clamp();
+          apply(true);
+        }
+        lastTap = null;
+      } else {
+        lastTap = { time: now, p: tap.p };
+      }
+    }
+    gesture = null;
+    tap = null;
+  });
+
+  return { reset: () => s !== 1 && reset(false) };
+}
+
+/** Horizontal snap scroller; loads full-size images as slides come into view. */
+function buildScroller(items, onIndex) {
+  const scroller = document.createElement('div');
+  scroller.className = 'scroller';
+  scroller.innerHTML = items
+    .map((item, i) => `<div class="slide"><img src="${item.thumb}" data-i="${i}" alt="" draggable="false"></div>`)
+    .join('');
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const img = entry.target;
+        observer.unobserve(img);
+        items[img.dataset.i].full().then((url) => url && (img.src = url));
+      }
+    },
+    { root: scroller, rootMargin: '0px 100%' }
+  );
+  const zooms = [...scroller.querySelectorAll('.slide')].map((slide) => {
+    const img = slide.querySelector('img');
+    observer.observe(img);
+    return enableZoom(slide, img, scroller);
+  });
+
+  let current = -1;
+  const report = (i) => {
+    if (i === current) return;
+    zooms[current]?.reset();
+    current = i;
+    onIndex(i);
+  };
+  const index = () => Math.round(scroller.scrollLeft / Math.max(1, scroller.clientWidth));
+  scroller.addEventListener('scroll', () => report(index()), { passive: true });
+
+  return {
+    scroller,
+    scrollTo: (i) => {
+      scroller.scrollLeft = i * scroller.clientWidth;
+      report(i);
+    },
+  };
+}
+
+function openViewer(items, start = 0) {
   const el = document.createElement('div');
   el.className = 'viewer';
   el.innerHTML = `
@@ -809,21 +990,23 @@ function openViewer(startId) {
       </div>
     </div>
     <div class="panes"><div class="pane"></div></div>
-    <div class="caption"></div>`;
+    <div class="caption">Pinch or double-tap to zoom</div>`;
   const caption = $('[data-caption]', el);
   const shareBtn = $('[data-share]', el);
+  shareBtn.hidden = !items.some((item) => item.photo);
   // The current photo's file is prepared ahead so the share sheet opens within the tap.
-  let current = null;
   let prepared = null;
-  const { scroller, scrollTo } = buildScroller(photos, (i) => {
-    const photo = photos[i];
-    if (!photo || photo === current) return;
-    current = photo;
+  let currentKey = null;
+  const { scroller, scrollTo } = buildScroller(items, (i) => {
+    const item = items[i];
+    if (!item) return;
+    currentKey = item.key;
     prepared = null;
     shareBtn.disabled = true;
-    caption.textContent = photoDate(photo);
-    jpegFiles([photo]).then((files) => {
-      if (current !== photo) return;
+    caption.textContent = item.date;
+    if (!item.photo) return;
+    jpegFiles([item.photo]).then((files) => {
+      if (currentKey !== item.key) return;
       prepared = files;
       shareBtn.disabled = false;
     });
@@ -833,16 +1016,25 @@ function openViewer(startId) {
   shareBtn.addEventListener('click', () => {
     if (prepared) share(prepared).catch((err) => err.name !== 'AbortError' && toast('Couldn’t share the photo'));
   });
+  // Stop iOS from zooming the whole page on pinch.
+  el.addEventListener('gesturestart', (e) => e.preventDefault());
   openOverlay(el);
-  scrollTo(Math.max(0, photos.findIndex((p) => p.id === startId)));
+  scrollTo(Math.max(0, start));
+}
+
+/** Opens the viewer over all saved photos (newest first), starting at the given photo. */
+function openPhoto(id) {
+  const photos = photoEntriesDesc().flatMap((e) => photosOf(e.id));
+  openViewer(photos.map(viewItem), photos.findIndex((p) => p.id === id));
 }
 
 function openCompare() {
   const photos = entriesAsc().flatMap((e) => photosOf(e.id));
+  const items = photos.map(viewItem);
   const el = document.createElement('div');
   el.className = 'viewer';
   el.innerHTML = `
-    <div class="viewer-top"><span>Swipe each side</span><button class="close" data-close aria-label="Close">${ICONS.close}</button></div>
+    <div class="viewer-top"><span>Swipe each side · pinch to zoom</span><button class="close" data-close aria-label="Close">${ICONS.close}</button></div>
     <div class="panes"></div>`;
   const panes = $('.panes', el);
   // Oldest vs newest session, both starting from that session's first shot (same pose).
@@ -853,14 +1045,15 @@ function openCompare() {
     pane.className = 'pane';
     const caption = document.createElement('div');
     caption.className = 'caption';
-    const s = buildScroller(photos, (i) => {
-      if (photos[i]) caption.textContent = photoDate(photos[i]);
+    const s = buildScroller(items, (i) => {
+      if (items[i]) caption.textContent = items[i].date;
     });
     pane.append(s.scroller, caption);
     panes.append(pane);
     return s;
   });
   $('[data-close]', el).addEventListener('click', () => closeOverlay(el));
+  el.addEventListener('gesturestart', (e) => e.preventDefault());
   openOverlay(el);
   scrollers.forEach((s, i) => s.scrollTo(starts[i]));
 }
@@ -1117,7 +1310,7 @@ const actions = {
   },
   'new-entry': () => openEditor(null),
   'edit-entry': ({ id }) => openEditor(state.entries.find((e) => e.id === id)),
-  'open-photo': ({ id }) => openViewer(id),
+  'open-photo': ({ id }) => openPhoto(id),
   compare: () => openCompare(),
   'export-measurements': () => exportMeasurements(),
   'month-backup': ({ month }) => openMonthSheet(month),
