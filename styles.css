@@ -504,3 +504,52 @@ button.row:active, label.row.action:active { background: var(--fill); }
   color: var(--bg);
   font-size: 15px;
 }
+
+.viewer-actions { display: flex; gap: 10px; }
+.viewer-actions [data-share] svg { width: 18px; height: 18px; }
+.close:disabled { opacity: 0.4; }
+
+/* ---------- Action sheet ---------- */
+
+.action-sheet { position: fixed; inset: 0; z-index: 40; }
+
+.as-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.as-panel {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(env(safe-area-inset-bottom) + 8px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transform: translateY(120%);
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.action-sheet.shown .as-backdrop { opacity: 1; }
+.action-sheet.shown .as-panel { transform: none; }
+
+.as-group { margin: 0; border-radius: 14px; }
+
+.as-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--sec);
+}
+
+.as-title b { font-size: 15px; color: var(--text); font-weight: 600; }
+.as-btn { justify-content: center; min-height: 56px; font-size: 19px; font-variant-numeric: tabular-nums; }
+.as-btn:disabled { color: var(--ter); }
+.bold { font-weight: 600; }
+.saved { color: var(--text); font-weight: 500; }

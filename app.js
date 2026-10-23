@@ -36,6 +36,7 @@ const ICONS = {
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   back: '<svg viewBox="0 0 13 21" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2L2.5 10.5 11 19"/></svg>',
   close: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M2 2l10 10M12 2L2 12"/></svg>',
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7.5 7.5L12 3l4.5 4.5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>',
   ruler: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 7v4M10 7v3M14 7v4M18 7v3"/></svg>',
 };
 
@@ -395,16 +396,28 @@ function viewMetric(key) {
 
 function viewHistory() {
   const lastExport = Number(localStorage.getItem('lastExport')) || null;
+  const months = photoMonths();
   const backup = `
     <div class="group-title">Backup</div>
     <div class="group">
-      <button class="row action" data-action="export">Export data</button>
+      <button class="row action" data-action="export-measurements">Export measurements</button>
       <label class="row action">Import from file
-        <input type="file" accept=".json,application/json" hidden data-import>
+        <input type="file" accept=".json,application/json" multiple hidden data-import>
       </label>
     </div>
-    <div class="group-foot">Your data lives only on this phone. Save a backup to Files or iCloud from time to time.
-      ${lastExport ? `Last backup: ${fmtDate(isoDate(new Date(lastExport)))}.` : ''}</div>`;
+    <div class="group-foot">Your data lives only on this phone. The measurements file is small and holds all your numbers.
+      ${lastExport ? `Last export: ${fmtDate(isoDate(new Date(lastExport)))}.` : ''}</div>
+    ${months.length ? `
+      <div class="group-title">Photo backup</div>
+      <div class="group">
+        ${months.map((m) => `
+          <button class="row" data-action="month-backup" data-month="${m.key}">
+            <span class="grow">${fmtMonth(m.key)}</span>
+            <span class="sec num">${m.saved ? '<span class="saved">Saved</span> · ' : ''}${plural(m.count, 'photo')}</span>
+            <span class="chev"></span>
+          </button>`).join('')}
+      </div>
+      <div class="group-foot">Save a month to Photos or Files as regular images, or as a backup file you can import later.</div>` : ''}`;
 
   const entries = entriesDesc();
   if (!entries.length) {
@@ -717,15 +730,38 @@ function openViewer(startId) {
   const el = document.createElement('div');
   el.className = 'viewer';
   el.innerHTML = `
-    <div class="viewer-top"><span data-caption></span><button class="close" data-close aria-label="Close">${ICONS.close}</button></div>
+    <div class="viewer-top">
+      <span data-caption></span>
+      <div class="viewer-actions">
+        <button class="close" data-share aria-label="Save or share photo" disabled>${ICONS.share}</button>
+        <button class="close" data-close aria-label="Close">${ICONS.close}</button>
+      </div>
+    </div>
     <div class="panes"><div class="pane"></div></div>
     <div class="caption"></div>`;
   const caption = $('[data-caption]', el);
+  const shareBtn = $('[data-share]', el);
+  // The current photo's file is prepared ahead so the share sheet opens within the tap.
+  let current = null;
+  let prepared = null;
   const { scroller, scrollTo } = buildScroller(photos, (i) => {
-    if (photos[i]) caption.textContent = photoDate(photos[i]);
+    const photo = photos[i];
+    if (!photo || photo === current) return;
+    current = photo;
+    prepared = null;
+    shareBtn.disabled = true;
+    caption.textContent = photoDate(photo);
+    jpegFiles([photo]).then((files) => {
+      if (current !== photo) return;
+      prepared = files;
+      shareBtn.disabled = false;
+    });
   });
   $('.pane', el).append(scroller);
   $('[data-close]', el).addEventListener('click', () => closeOverlay(el));
+  shareBtn.addEventListener('click', () => {
+    if (prepared) share(prepared).catch((err) => err.name !== 'AbortError' && toast('Couldn’t share the photo'));
+  });
   openOverlay(el);
   scrollTo(Math.max(0, photos.findIndex((p) => p.id === startId)));
 }
@@ -759,6 +795,8 @@ function openCompare() {
 }
 
 // ---------- Backup ----------
+// Measurements export as one small file. Photos export per month, either as plain JPEGs
+// (share sheet → Save to Photos / Files) or as a JSON backup file that can be imported back.
 
 const bufToBase64 = (buf) =>
   new Promise((resolve) => {
@@ -769,93 +807,217 @@ const bufToBase64 = (buf) =>
 
 const base64ToBuf = (b64) => fetch(`data:application/octet-stream;base64,${b64}`).then((r) => r.arrayBuffer());
 
-let preparedExport = null;
+const monthKey = (iso) => iso.slice(0, 7);
+const fmtMonth = (key) =>
+  new Date(toTime(key + '-01')).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+const fmtMB = (bytes) =>
+  bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-async function exportData(button) {
-  // iOS only allows the share sheet right after a tap, so prepare first, then share on the next tap.
-  if (preparedExport) {
-    const file = preparedExport;
-    try {
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file] });
-      } else {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(file);
-        a.download = file.name;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-      }
-      localStorage.setItem('lastExport', String(Date.now()));
-      preparedExport = null;
-      render();
-    } catch (err) {
-      if (err.name !== 'AbortError') toast('Couldn’t save the file');
-    }
-    return;
-  }
-
-  button.textContent = 'Preparing file…';
-  button.disabled = true;
+function readJSON(key) {
   try {
-    const fulls = new Map((await getAll('fulls')).map((f) => [f.id, f.data]));
-    const photos = [];
-    for (const p of state.photos) {
-      photos.push({
-        id: p.id,
-        entryId: p.entryId,
-        createdAt: p.createdAt,
-        thumb: await bufToBase64(p.thumb),
-        full: fulls.has(p.id) ? await bufToBase64(fulls.get(p.id)) : null,
-      });
-    }
-    const payload = { app: 'body-tracker', version: 1, exportedAt: new Date().toISOString(), entries: state.entries, photos };
-    preparedExport = new File([JSON.stringify(payload)], `body-tracker-${today()}.json`, { type: 'application/json' });
-    const mb = (preparedExport.size / 1024 / 1024).toFixed(1);
-    button.textContent = `Save backup (${mb} MB)`;
-  } catch (err) {
-    console.error(err);
-    button.textContent = 'Export data';
-    toast('Couldn’t prepare backup');
+    return JSON.parse(localStorage.getItem(key)) || {};
+  } catch {
+    return {};
   }
-  button.disabled = false;
 }
 
-async function importData(file) {
-  let data;
-  try {
-    data = JSON.parse(await file.text());
-  } catch {
-    toast('That’s not a backup file');
-    return;
-  }
-  if (data?.app !== 'body-tracker' || !Array.isArray(data.entries) || !Array.isArray(data.photos)) {
-    toast('That’s not a backup file');
-    return;
-  }
-  if (!confirm(`Import ${data.entries.length} entries and ${data.photos.length} photos? Matching entries will be replaced.`)) return;
+function photosInMonth(key) {
+  return entriesAsc().filter((e) => monthKey(e.date) === key).flatMap((e) => photosOf(e.id));
+}
 
-  try {
-    const photos = [];
-    for (const p of data.photos) {
-      photos.push({
-        meta: { id: p.id, entryId: p.entryId, createdAt: p.createdAt, thumb: await base64ToBuf(p.thumb) },
-        full: p.full ? { id: p.id, data: await base64ToBuf(p.full) } : null,
-      });
-    }
-    await write((s) => {
-      data.entries.forEach((e) => s.entries.put(e));
-      photos.forEach(({ meta, full }) => {
-        s.photos.put(meta);
-        if (full) s.fulls.put(full);
-      });
+/** Months that have photos, newest first, with whether everything in them was already saved. */
+function photoMonths() {
+  const saved = readJSON('photoBackups');
+  const keys = [...new Set(photoEntriesDesc().map((e) => monthKey(e.date)))];
+  return keys.map((key) => {
+    const photos = photosInMonth(key);
+    const newest = Math.max(...photos.map((p) => p.createdAt));
+    return { key, count: photos.length, saved: saved[key] >= newest };
+  });
+}
+
+function markMonthSaved(key) {
+  const saved = readJSON('photoBackups');
+  saved[key] = Date.now();
+  localStorage.setItem('photoBackups', JSON.stringify(saved));
+}
+
+async function share(files) {
+  if (navigator.canShare?.({ files })) {
+    await navigator.share({ files });
+    return;
+  }
+  for (const file of files) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file);
+    a.download = file.name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+}
+
+function fullsFor(ids) {
+  const store = db.transaction('fulls').objectStore('fulls');
+  return Promise.all(ids.map((id) => promisify(store.get(id))));
+}
+
+async function jpegFiles(photos) {
+  const fulls = await fullsFor(photos.map((p) => p.id));
+  const perDate = {};
+  return photos.map((p, i) => {
+    const date = state.entries.find((e) => e.id === p.entryId)?.date ?? 'photo';
+    perDate[date] = (perDate[date] || 0) + 1;
+    return new File([fulls[i]?.data ?? p.thumb], `body-${date}-${perDate[date]}.jpg`, { type: 'image/jpeg' });
+  });
+}
+
+async function photoBackupFile(key) {
+  const photos = photosInMonth(key);
+  const entryIds = new Set(photos.map((p) => p.entryId));
+  const fulls = await fullsFor(photos.map((p) => p.id));
+  const out = [];
+  for (const [i, p] of photos.entries()) {
+    out.push({
+      id: p.id,
+      entryId: p.entryId,
+      createdAt: p.createdAt,
+      thumb: await bufToBase64(p.thumb),
+      full: fulls[i] ? await bufToBase64(fulls[i].data) : null,
     });
-    photos.forEach(({ meta }) => dropUrls(meta.id));
+  }
+  const payload = {
+    app: 'body-tracker',
+    version: 2,
+    kind: 'photos',
+    exportedAt: new Date().toISOString(),
+    entries: state.entries.filter((e) => entryIds.has(e.id)),
+    photos: out,
+  };
+  return [new File([JSON.stringify(payload)], `body-tracker-photos-${key}.json`, { type: 'application/json' })];
+}
+
+function exportMeasurements() {
+  // Built synchronously so the share sheet opens within the same tap.
+  const payload = { app: 'body-tracker', version: 2, kind: 'measurements', exportedAt: new Date().toISOString(), entries: state.entries, photos: [] };
+  const file = new File([JSON.stringify(payload)], `body-tracker-measurements-${today()}.json`, { type: 'application/json' });
+  share([file])
+    .then(() => {
+      localStorage.setItem('lastExport', String(Date.now()));
+      render();
+    })
+    .catch((err) => err.name !== 'AbortError' && toast('Couldn’t save the file'));
+}
+
+/**
+ * iOS opens the share sheet only directly after a tap, so files are built as soon as
+ * the button appears and shared on tap.
+ */
+function prepareShareButton(button, label, build, onShared) {
+  let files = null;
+  button.disabled = true;
+  button.textContent = 'Preparing…';
+  build()
+    .then((built) => {
+      files = built;
+      button.textContent = `${label} · ${fmtMB(built.reduce((n, f) => n + f.size, 0))}`;
+      button.disabled = false;
+    })
+    .catch((err) => {
+      console.error(err);
+      button.textContent = 'Couldn’t prepare files';
+    });
+  button.addEventListener('click', async () => {
+    if (!files) return;
+    try {
+      await share(files);
+      onShared();
+    } catch (err) {
+      if (err.name !== 'AbortError') toast('Couldn’t share the files');
+    }
+  });
+}
+
+function openMonthSheet(key) {
+  const count = photosInMonth(key).length;
+  const el = document.createElement('div');
+  el.className = 'action-sheet';
+  el.innerHTML = `
+    <div class="as-backdrop" data-close></div>
+    <div class="as-panel">
+      <div class="group as-group">
+        <div class="as-title"><b>${fmtMonth(key)}</b>${plural(count, 'photo')}</div>
+        <button class="row as-btn" data-images></button>
+        <button class="row as-btn" data-file></button>
+      </div>
+      <div class="group as-group">
+        <button class="row as-btn bold" data-close>Cancel</button>
+      </div>
+    </div>`;
+  const done = () => {
+    markMonthSaved(key);
+    closeOverlay(el);
+    render();
+  };
+  prepareShareButton($('[data-images]', el), 'Save images', () => jpegFiles(photosInMonth(key)), done);
+  prepareShareButton($('[data-file]', el), 'Backup file', () => photoBackupFile(key), done);
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close]')) closeOverlay(el);
+  });
+  openOverlay(el);
+}
+
+const isBackup = (d) => d?.app === 'body-tracker' && Array.isArray(d.entries) && Array.isArray(d.photos);
+
+async function importFiles(files) {
+  const batches = [];
+  for (const file of files) {
+    try {
+      const data = JSON.parse(await file.text());
+      if (isBackup(data)) batches.push(data);
+    } catch {}
+  }
+  if (!batches.length) {
+    toast('That’s not a backup file');
+    return;
+  }
+  const entryCount = batches.reduce((n, b) => n + (b.kind === 'photos' ? 0 : b.entries.length), 0);
+  const photoCount = batches.reduce((n, b) => n + b.photos.length, 0);
+  const parts = [entryCount && plural(entryCount, 'entry').replace('entrys', 'entries'), photoCount && plural(photoCount, 'photo')].filter(Boolean);
+  if (!confirm(`Import ${parts.join(' and ') || 'this backup'}? Matching entries will be replaced.`)) return;
+
+  // Photo batches go first so a measurements file imported alongside wins for the numbers.
+  batches.sort((a, b) => (a.kind === 'photos' ? 0 : 1) - (b.kind === 'photos' ? 0 : 1));
+  const existing = new Set(state.entries.map((e) => e.id));
+  try {
+    for (const data of batches) {
+      const photos = [];
+      for (const p of data.photos) {
+        photos.push({
+          meta: { id: p.id, entryId: p.entryId, createdAt: p.createdAt, thumb: await base64ToBuf(p.thumb) },
+          full: p.full ? { id: p.id, data: await base64ToBuf(p.full) } : null,
+        });
+      }
+      await write((s) => {
+        for (const e of data.entries) {
+          // A photo backup carries its entries only so photos are never orphaned; don't let it overwrite newer numbers.
+          if (data.kind === 'photos' && existing.has(e.id)) continue;
+          s.entries.put(e);
+          existing.add(e.id);
+        }
+        for (const { meta, full } of photos) {
+          s.photos.put(meta);
+          if (full) s.fulls.put(full);
+        }
+      });
+      photos.forEach(({ meta }) => dropUrls(meta.id));
+    }
     await loadState();
     render();
     toast('Imported');
   } catch (err) {
     console.error(err);
-    toast('Import failed');
+    toast('Import failed. Try importing the files one at a time.');
   }
 }
 
@@ -886,7 +1048,8 @@ const actions = {
   'edit-entry': ({ id }) => openEditor(state.entries.find((e) => e.id === id)),
   'open-photo': ({ id }) => openViewer(id),
   compare: () => openCompare(),
-  export: (_, el) => exportData(el),
+  'export-measurements': () => exportMeasurements(),
+  'month-backup': ({ month }) => openMonthSheet(month),
 };
 
 $('#app').addEventListener('click', (e) => {
@@ -895,10 +1058,10 @@ $('#app').addEventListener('click', (e) => {
 });
 
 $('#app').addEventListener('change', (e) => {
-  if (e.target.matches('[data-import]') && e.target.files[0]) {
-    const file = e.target.files[0];
+  if (e.target.matches('[data-import]') && e.target.files.length) {
+    const files = [...e.target.files];
     e.target.value = '';
-    importData(file);
+    importFiles(files);
   }
 });
 
