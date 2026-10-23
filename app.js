@@ -1090,6 +1090,46 @@ function openPhoto(id) {
   openViewer(photos.map(viewItem), photos.findIndex((p) => p.id === id));
 }
 
+/** Lets you pick one photo from all sessions, newest first. Resolves with the item index or null. */
+function pickPhoto(items, current, title) {
+  return new Promise((resolve) => {
+    const groups = [];
+    items.forEach((item, i) => {
+      const last = groups[groups.length - 1];
+      if (last && last.date === item.date) last.idx.push(i);
+      else groups.push({ date: item.date, idx: [i] });
+    });
+    groups.reverse();
+
+    const el = document.createElement('div');
+    el.className = 'picker';
+    el.innerHTML = `
+      <div class="picker-bar">
+        <button class="tb-btn" data-cancel>Cancel</button>
+        <div class="tb-title">${title}</div>
+        <span></span>
+      </div>
+      <div class="picker-body">
+        ${groups.map((g) => `
+          <div class="pk-date">${g.date}</div>
+          <div class="pk-row">
+            ${g.idx.map((i) => `<button class="pk-thumb ${i === current ? 'on' : ''}" data-i="${i}" aria-label="${g.date}"><img src="${items[i].thumb}" alt=""></button>`).join('')}
+          </div>`).join('')}
+      </div>`;
+    const done = (value) => {
+      closeOverlay(el);
+      resolve(value);
+    };
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('[data-cancel]')) done(null);
+      const thumb = e.target.closest('[data-i]');
+      if (thumb) done(Number(thumb.dataset.i));
+    });
+    openOverlay(el);
+    el.querySelector('.pk-thumb.on')?.scrollIntoView({ block: 'center' });
+  });
+}
+
 function openCompare() {
   const photos = entriesAsc().flatMap((e) => photosOf(e.id));
   const items = photos.map(viewItem);
@@ -1123,7 +1163,7 @@ function openCompare() {
         ${[0, 1].map((w) => `
           <div class="sv-pick">
             <button class="close" data-step="${w}:-1" aria-label="Previous photo">${ICONS.back}</button>
-            <span data-label="${w}"></span>
+            <button class="pick-btn" data-label="${w}" data-pick="${w}"></button>
             <button class="close flip-x" data-step="${w}:1" aria-label="Next photo">${ICONS.back}</button>
           </div>`).join('')}
       </div>
@@ -1131,13 +1171,17 @@ function openCompare() {
 
   // Side by side: two independent swipeable panes.
   const panes = $('.panes', el);
-  const scrollers = starts.map(() => {
+  const shown = [...starts];
+  const scrollers = starts.map((_, w) => {
     const pane = document.createElement('div');
     pane.className = 'pane';
-    const caption = document.createElement('div');
-    caption.className = 'caption';
+    const caption = document.createElement('button');
+    caption.className = 'caption pick-btn';
+    caption.dataset.pickSide = w;
     const s = buildScroller(items, (i) => {
-      if (items[i]) caption.textContent = items[i].date;
+      if (!items[i]) return;
+      shown[w] = i;
+      caption.innerHTML = `${items[i].date}<span class="pick-caret"></span>`;
     });
     pane.append(s.scroller, caption);
     panes.append(pane);
@@ -1162,7 +1206,7 @@ function openCompare() {
       const img = $(`.sv-img[data-which="${w}"]`, el);
       img.src = items[i].thumb;
       items[i].full().then((url) => url && picked[w] === i && (img.src = url));
-      $(`[data-label="${w}"]`, el).textContent = `${w ? 'After' : 'Before'} · ${items[i].date}`;
+      $(`[data-label="${w}"]`, el).innerHTML = `${w ? 'After' : 'Before'} · ${items[i].date}<span class="pick-caret"></span>`;
     });
   };
   const fitFrame = () => {
@@ -1207,6 +1251,20 @@ function openCompare() {
     if (e.target.closest('[data-close]')) closeOverlay(el);
     const modeBtn = e.target.closest('[data-mode]');
     if (modeBtn) setMode(modeBtn.dataset.mode);
+    const pick = e.target.closest('[data-pick]');
+    if (pick) {
+      const w = Number(pick.dataset.pick);
+      pickPhoto(items, picked[w], w ? 'After photo' : 'Before photo').then((i) => {
+        if (i == null) return;
+        picked[w] = i;
+        showPicked();
+      });
+    }
+    const side = e.target.closest('[data-pick-side]');
+    if (side) {
+      const w = Number(side.dataset.pickSide);
+      pickPhoto(items, shown[w], w ? 'Right photo' : 'Left photo').then((i) => i != null && scrollers[w].scrollTo(i));
+    }
     const step = e.target.closest('[data-step]');
     if (step) {
       const [w, d] = step.dataset.step.split(':').map(Number);
