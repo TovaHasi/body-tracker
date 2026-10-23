@@ -376,6 +376,7 @@ button.row:active, label.row.action:active { background: var(--fill); }
 }
 
 .strip::-webkit-scrollbar { display: none; }
+.strip[hidden] + .row::before { display: none; }
 
 .strip-item {
   position: relative;

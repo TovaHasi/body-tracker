@@ -1,5 +1,5 @@
 // Bump on every deploy so the new shell gets precached.
-const CACHE = 'body-tracker-v2';
+const CACHE = 'body-tracker-v3';
 const ASSETS = [
   './',
   'index.html',
@@ -24,20 +24,22 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Stale-while-revalidate: open instantly from cache, pick up updates on next launch.
+// Network-first so updates show up immediately; cache when offline or the network is slow.
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET' || new URL(request.url).origin !== location.origin) return;
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(request, { ignoreSearch: true });
-      const network = fetch(request)
-        .then((response) => {
-          if (response.ok) cache.put(request, response.clone());
-          return response;
-        })
-        .catch(() => cached);
-      return cached || network;
+      const network = fetch(request, { cache: 'no-cache' }).then((response) => {
+        if (response.ok) cache.put(request, response.clone());
+        return response;
+      });
+      const timeout = new Promise((resolve) => setTimeout(resolve, 3000));
+      try {
+        const response = await Promise.race([network, timeout]);
+        if (response) return response;
+      } catch {}
+      return (await cache.match(request, { ignoreSearch: true })) || network;
     })
   );
 });

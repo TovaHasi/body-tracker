@@ -738,7 +738,9 @@ function openCompare() {
     <div class="viewer-top"><span>Swipe each side</span><button class="close" data-close aria-label="Close">${ICONS.close}</button></div>
     <div class="panes"></div>`;
   const panes = $('.panes', el);
-  const starts = [0, photos.length - 1];
+  // Oldest vs newest session, both starting from that session's first shot (same pose).
+  const lastEntryId = photos[photos.length - 1].entryId;
+  const starts = [0, photos.findIndex((p) => p.entryId === lastEntryId)];
   const scrollers = starts.map(() => {
     const pane = document.createElement('div');
     pane.className = 'pane';
