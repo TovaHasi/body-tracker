@@ -43,6 +43,7 @@ const ICONS = {
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   back: '<svg viewBox="0 0 13 21" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2L2.5 10.5 11 19"/></svg>',
   close: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M2 2l10 10M12 2L2 12"/></svg>',
+  flip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.7"/><path d="M20 4v4.7h-4.7"/><path d="M20 12a8 8 0 0 1-13.7 5.6L4 15.3"/><path d="M4 20v-4.7h4.7"/></svg>',
   share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7.5 7.5L12 3l4.5 4.5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>',
   ruler: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 7v4M10 7v3M14 7v4M18 7v3"/></svg>',
 };
@@ -322,6 +323,11 @@ function mountChart(el, series, onSelect, photoDays = new Map()) {
 
   const marks = series.map((s) => {
     const xy = s.pts.map((p) => [x(p.t), y(p.v)]);
+    if (s.trend) {
+      return xy.length > 1
+        ? `<path d="${smoothPath(xy)}" fill="none" stroke="var(--text)" stroke-opacity="0.16" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`
+        : '';
+    }
     const line = xy.length > 1
       ? `<path d="${smoothPath(xy)}" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"${s.dashed ? ' stroke-dasharray="5 5"' : ''}/>`
       : '';
@@ -341,6 +347,7 @@ function mountChart(el, series, onSelect, photoDays = new Map()) {
     const px = clientX - svg.getBoundingClientRect().left;
     const t = times.reduce((best, cur) => (Math.abs(x(cur) - px) < Math.abs(x(best) - px) ? cur : best));
     const dots = series
+      .filter((s) => !s.trend)
       .map((s) => s.pts.find((p) => p.t === t))
       .filter(Boolean)
       .map((p) => `<circle cx="${x(t)}" cy="${y(p.v)}" r="6" fill="var(--text)" stroke="var(--card)" stroke-width="2"/>`)
@@ -374,6 +381,41 @@ function emptyState(title, text) {
 const sideTag = (s) => (s.label ? `<span class="side">${s.label}</span>` : '');
 
 /** "L +1.2 · R +0.9 cm" for the series that have at least two points. */
+const DAY = 864e5;
+
+/** Least-squares slope over the 4 weeks before the latest point, in units per week. */
+function weeklyRate(pts) {
+  if (pts.length < 2) return null;
+  const end = pts[pts.length - 1].t;
+  const win = pts.filter((p) => p.t >= end - 28 * DAY);
+  if (win.length < 2 || end - win[0].t < 7 * DAY) return null;
+  const mt = win.reduce((a, p) => a + p.t, 0) / win.length;
+  const mv = win.reduce((a, p) => a + p.v, 0) / win.length;
+  const num = win.reduce((a, p) => a + (p.t - mt) * (p.v - mv), 0);
+  const den = win.reduce((a, p) => a + (p.t - mt) ** 2, 0);
+  return den ? (num / den) * 7 * DAY : null;
+}
+
+/** Time-aware exponential moving average (τ = 7 days): smooths out day-to-day water weight. */
+function trendPoints(pts, tau = 7 * DAY) {
+  let level = null;
+  return pts.map((p, i) => {
+    level = i === 0 ? p.v : level + (1 - Math.exp(-(p.t - pts[i - 1].t) / tau)) * (p.v - level);
+    return { ...p, v: level };
+  });
+}
+
+/** "+0.3 kg/week (+0.4%)" over the last 4 weeks; "L +0.1 · R +0.2 cm/week" for paired metrics. */
+function rateText(m, allSeries) {
+  const rates = allSeries.map((s) => ({ s, r: weeklyRate(s.pts) })).filter((x) => x.r != null);
+  if (!rates.length) return '';
+  if (m.key === 'weight') {
+    const { s, r } = rates[0];
+    return `${fmtSigned(r)} kg/week (${fmtSigned((r / s.pts[s.pts.length - 1].v) * 100)}%)`;
+  }
+  return `${rates.map(({ s, r }) => `${s.label ? s.label + ' ' : ''}${fmtSigned(r)}`).join(' · ')} ${m.unit}/week`;
+}
+
 function changeText(m, series, suffix) {
   const parts = series
     .filter((s) => s.pts.length > 1)
@@ -391,7 +433,8 @@ function viewProgress() {
     const value = series
       .map((s) => `<span class="pair-val">${sideTag(s)}${fmt(s.pts[s.pts.length - 1].v)}</span>`)
       .join('');
-    const delta = changeText(m, series, 'since start');
+    const rate = m.key === 'weight' ? rateText(m, series) : '';
+    const delta = [changeText(m, series, 'since start'), rate].filter(Boolean).join(' · ');
     return `<button class="row metric-row" data-action="open-metric" data-key="${m.key}">
       <div class="grow">
         <div class="mr-title">${m.title}</div>
@@ -408,6 +451,11 @@ function viewProgress() {
 function viewMetric(key) {
   const m = METRIC[key];
   const series = metricSeries(m, state.range);
+  const rate = rateText(m, metricSeries(m));
+  // Weight gets a smoothed trend line, computed over all data so the range start isn't skewed.
+  const trend = m.key === 'weight'
+    ? [{ name: 'Trend', trend: true, pts: inRange(trendPoints(points('weight')), state.range) }]
+    : [];
   const all = series.flatMap((s) => s.pts);
   const latestT = all.length ? Math.max(...all.map((p) => p.t)) : null;
   const firstT = all.length ? Math.min(...all.map((p) => p.t)) : null;
@@ -429,6 +477,7 @@ function viewMetric(key) {
     .join('');
   const legendItems = [
     ...(m.paired ? series.map((s) => `<span><i class="lg ${s.dashed ? 'dashed' : ''}"></i>${s.name}</span>`) : []),
+    ...(trend.length ? ['<span><i class="lg trend"></i>Trend</span>'] : []),
     ...(photosInView ? [`<span><svg class="lg-cam" viewBox="0 0 12 9">${cameraMark(6, 0.5)}</svg>Photo day</span>`] : []),
   ];
   const legend = legendItems.length ? `<div class="legend">${legendItems.join('')}</div>` : '';
@@ -442,6 +491,7 @@ function viewMetric(key) {
       </div>
       <div class="d-sub" id="d-date"></div>
       <div class="d-sub" id="d-change"></div>
+      ${rate ? `<div class="d-rate"><span>Last 4 weeks</span><b class="num">${rate}</b></div>` : ''}
       <div class="chart" id="chart"></div>
       ${legend}
       <div class="segmented">
@@ -485,7 +535,7 @@ function viewMetric(key) {
 
   const after = () => {
     show(null);
-    mountChart($('#chart'), series, show, photoDays);
+    mountChart($('#chart'), [...trend, ...series], show, photoDays);
   };
 
   return { title: m.title, back: true, body, after };
@@ -643,7 +693,8 @@ function openEditor(entry) {
       <div class="group-title">Photos</div>
       <div class="group">
         <div class="strip" hidden></div>
-        <label class="row action">Add photos
+        ${navigator.mediaDevices?.getUserMedia ? '<button class="row action" data-e="camera">Take photo</button>' : ''}
+        <label class="row action">Choose from library
           <input type="file" accept="image/*" multiple hidden data-photos>
         </label>
       </div>
@@ -685,14 +736,12 @@ function openEditor(entry) {
 
   el.addEventListener('input', updateSave);
 
-  $('[data-photos]', el).addEventListener('change', async (e) => {
-    const files = [...e.target.files];
-    e.target.value = '';
-    pending += files.length;
+  const addImages = async (blobs) => {
+    pending += blobs.length;
     renderStrip();
-    for (const file of files) {
+    for (const blob of blobs) {
       try {
-        const { full, thumb } = await processImage(file);
+        const { full, thumb } = await processImage(blob);
         photos.push({
           id: uid(),
           existing: false,
@@ -706,6 +755,12 @@ function openEditor(entry) {
       pending -= 1;
       renderStrip();
     }
+  };
+
+  $('[data-photos]', el).addEventListener('change', (e) => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    addImages(files);
   });
 
   el.addEventListener('click', async (e) => {
@@ -714,6 +769,13 @@ function openEditor(entry) {
     const action = target.dataset.e;
 
     if (action === 'cancel') close();
+
+    if (action === 'camera') {
+      // Ghosts come from the most recent other session that has photos.
+      const prev = entriesDesc().find((x) => x.id !== entry?.id && photosOf(x.id).length);
+      const ghosts = prev ? photosOf(prev.id).map((p) => ({ load: () => fullUrl(p.id), date: `Ghost from ${fmtDate(prev.date)}` })) : [];
+      openCamera({ ghosts, onShot: (blob) => addImages([blob]) });
+    }
 
     if (action === 'view-photo') {
       const date = fmtDate($('[data-date]', el).value || today());
@@ -1031,15 +1093,44 @@ function openPhoto(id) {
 function openCompare() {
   const photos = entriesAsc().flatMap((e) => photosOf(e.id));
   const items = photos.map(viewItem);
-  const el = document.createElement('div');
-  el.className = 'viewer';
-  el.innerHTML = `
-    <div class="viewer-top"><span>Swipe each side · pinch to zoom</span><button class="close" data-close aria-label="Close">${ICONS.close}</button></div>
-    <div class="panes"></div>`;
-  const panes = $('.panes', el);
   // Oldest vs newest session, both starting from that session's first shot (same pose).
   const lastEntryId = photos[photos.length - 1].entryId;
   const starts = [0, photos.findIndex((p) => p.entryId === lastEntryId)];
+  let mode = localStorage.getItem('compareMode') || 'side';
+
+  const el = document.createElement('div');
+  el.className = 'viewer';
+  el.innerHTML = `
+    <div class="viewer-top">
+      <div class="seg-dark">
+        <button data-mode="side">Side by side</button>
+        <button data-mode="slider">Slider</button>
+      </div>
+      <button class="close" data-close aria-label="Close">${ICONS.close}</button>
+    </div>
+    <div class="panes"></div>
+    <div class="slider-view" hidden>
+      <div class="sv-stage">
+        <div class="sv-frame">
+          <img class="sv-img" data-which="0" alt="" draggable="false">
+          <img class="sv-img sv-after" data-which="1" alt="" draggable="false">
+          <div class="sv-handle"><span></span></div>
+          <span class="sv-tag left">Before</span>
+          <span class="sv-tag right">After</span>
+        </div>
+      </div>
+      <div class="sv-pickers">
+        ${[0, 1].map((w) => `
+          <div class="sv-pick">
+            <button class="close" data-step="${w}:-1" aria-label="Previous photo">${ICONS.back}</button>
+            <span data-label="${w}"></span>
+            <button class="close flip-x" data-step="${w}:1" aria-label="Next photo">${ICONS.back}</button>
+          </div>`).join('')}
+      </div>
+    </div>`;
+
+  // Side by side: two independent swipeable panes.
+  const panes = $('.panes', el);
   const scrollers = starts.map(() => {
     const pane = document.createElement('div');
     pane.className = 'pane';
@@ -1052,10 +1143,254 @@ function openCompare() {
     panes.append(pane);
     return s;
   });
-  $('[data-close]', el).addEventListener('click', () => closeOverlay(el));
+
+  // Slider: "after" is drawn over "before" and clipped at the handle.
+  const picked = [...starts];
+  const sliderView = $('.slider-view', el);
+  const frame = $('.sv-frame', el);
+  const after = $('.sv-after', el);
+  const handle = $('.sv-handle', el);
+  let split = 0.5;
+
+  const setSplit = (v) => {
+    split = Math.min(1, Math.max(0, v));
+    after.style.clipPath = `inset(0 0 0 ${split * 100}%)`;
+    handle.style.left = `${split * 100}%`;
+  };
+  const showPicked = () => {
+    picked.forEach((i, w) => {
+      const img = $(`.sv-img[data-which="${w}"]`, el);
+      img.src = items[i].thumb;
+      items[i].full().then((url) => url && picked[w] === i && (img.src = url));
+      $(`[data-label="${w}"]`, el).textContent = `${w ? 'After' : 'Before'} · ${items[i].date}`;
+    });
+  };
+  const fitFrame = () => {
+    const img = $('.sv-img', el);
+    const stage = $('.sv-stage', el);
+    const ar = img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 3 / 4;
+    const w = Math.min(stage.clientWidth, stage.clientHeight * ar);
+    frame.style.width = `${w}px`;
+    frame.style.height = `${w / ar}px`;
+  };
+  $('.sv-img', el).addEventListener('load', fitFrame);
+
+  let dragging = false;
+  const move = (e) => {
+    const r = frame.getBoundingClientRect();
+    setSplit((e.clientX - r.left) / r.width);
+  };
+  frame.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    frame.setPointerCapture(e.pointerId);
+    move(e);
+  });
+  frame.addEventListener('pointermove', (e) => dragging && move(e));
+  frame.addEventListener('pointerup', () => (dragging = false));
+  frame.addEventListener('pointercancel', () => (dragging = false));
+
+  const setMode = (next) => {
+    mode = next;
+    localStorage.setItem('compareMode', mode);
+    el.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+    panes.hidden = mode !== 'side';
+    sliderView.hidden = mode !== 'slider';
+    if (mode === 'slider') {
+      showPicked();
+      requestAnimationFrame(fitFrame);
+    } else {
+      scrollers.forEach((s, i) => s.scrollTo(starts[i]));
+    }
+  };
+
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close]')) closeOverlay(el);
+    const modeBtn = e.target.closest('[data-mode]');
+    if (modeBtn) setMode(modeBtn.dataset.mode);
+    const step = e.target.closest('[data-step]');
+    if (step) {
+      const [w, d] = step.dataset.step.split(':').map(Number);
+      picked[w] = (picked[w] + d + items.length) % items.length;
+      showPicked();
+    }
+  });
   el.addEventListener('gesturestart', (e) => e.preventDefault());
+  window.addEventListener('resize', () => mode === 'slider' && fitFrame());
+
   openOverlay(el);
-  scrollers.forEach((s, i) => s.scrollTo(starts[i]));
+  setSplit(0.5);
+  setMode(mode);
+}
+
+// ---------- Camera ----------
+// Own camera screen so the previous session's photo can be laid over the viewfinder as a "ghost"
+// for matching pose and distance. Front-camera shots are saved mirrored, exactly as previewed.
+
+const TIMERS = [0, 3, 10];
+
+/** ghosts: [{ load: () => Promise<url>, date }] — photos from the previous session. onShot(blob) per accepted shot. */
+function openCamera({ ghosts, onShot }) {
+  let facing = localStorage.getItem('camFacing') || 'user';
+  let timer = Number(localStorage.getItem('camTimer')) || 0;
+  let ghost = ghosts.length ? 0 : -1;
+  let stream = null;
+  let shooting = false;
+  let reviewBlob = null;
+
+  const el = document.createElement('div');
+  el.className = 'camera';
+  el.innerHTML = `
+    <div class="cam-top">
+      <button class="close" data-close aria-label="Close">${ICONS.close}</button>
+      <div class="cam-tools">
+        <button class="cam-chip" data-ghost ${ghosts.length ? '' : 'hidden'}></button>
+        <button class="cam-chip" data-timer></button>
+      </div>
+    </div>
+    <div class="cam-stage">
+      <div class="cam-frame">
+        <video playsinline muted autoplay></video>
+        <img class="cam-ghost" alt="" hidden>
+        <div class="cam-count" hidden></div>
+        <div class="cam-flash"></div>
+      </div>
+    </div>
+    <div class="cam-bottom">
+      <span class="cam-hint"></span>
+      <button class="shutter" data-shoot aria-label="Take photo"></button>
+      <button class="close cam-flip" data-flip aria-label="Switch camera">${ICONS.flip}</button>
+    </div>
+    <div class="cam-review" hidden>
+      <div class="cam-stage"><img alt=""></div>
+      <div class="cam-review-bar">
+        <button class="tb-btn" data-retake>Retake</button>
+        <button class="tb-btn bold" data-use>Use photo</button>
+      </div>
+    </div>`;
+
+  const video = $('video', el);
+  const frame = $('.cam-frame', el);
+  const stage = $('.cam-stage', el);
+  const ghostImg = $('.cam-ghost', el);
+  const count = $('.cam-count', el);
+  const review = $('.cam-review', el);
+  const hint = $('.cam-hint', el);
+
+  // Size the frame to the camera's aspect ratio so the preview shows exactly what gets saved.
+  const fit = () => {
+    const ar = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 3 / 4;
+    const w = Math.min(stage.clientWidth, stage.clientHeight * ar);
+    frame.style.width = `${w}px`;
+    frame.style.height = `${w / ar}px`;
+  };
+
+  const renderTools = () => {
+    $('[data-timer]', el).textContent = timer ? `Timer ${timer}s` : 'Timer off';
+    $('[data-ghost]', el).textContent = ghost < 0 ? 'Ghost off' : `Ghost ${ghost + 1}/${ghosts.length}`;
+    ghostImg.hidden = ghost < 0;
+    hint.textContent = ghost < 0 ? '' : ghosts[ghost].date;
+    if (ghost >= 0) ghosts[ghost].load().then((url) => url && (ghostImg.src = url));
+    frame.classList.toggle('mirror', facing === 'user');
+  };
+
+  const stop = () => stream?.getTracks().forEach((t) => t.stop());
+
+  const start = async () => {
+    stop();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing, width: { ideal: 1440 }, height: { ideal: 1920 }, aspectRatio: { ideal: 3 / 4 } },
+        audio: false,
+      });
+    } catch (err) {
+      console.error(err);
+      close();
+      toast('No camera access. Allow it in Settings → Safari → Camera, or use Choose from library.');
+      return;
+    }
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    fit();
+    renderTools();
+  };
+
+  const capture = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (facing === 'user') {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0);
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      reviewBlob = blob;
+      $('.cam-review img', el).src = URL.createObjectURL(blob);
+      review.hidden = false;
+    }, 'image/jpeg', 0.92);
+  };
+
+  const shoot = async () => {
+    if (shooting || !video.videoWidth) return;
+    shooting = true;
+    for (let n = timer; n > 0; n--) {
+      count.textContent = n;
+      count.hidden = false;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    count.hidden = true;
+    capture();
+    shooting = false;
+  };
+
+  const closeReview = () => {
+    URL.revokeObjectURL($('.cam-review img', el).src);
+    review.hidden = true;
+    reviewBlob = null;
+  };
+
+  function close() {
+    stop();
+    closeOverlay(el);
+  }
+
+  el.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t.closest('[data-close]')) close();
+    if (t.closest('[data-shoot]')) shoot();
+    if (t.closest('[data-flip]')) {
+      facing = facing === 'user' ? 'environment' : 'user';
+      localStorage.setItem('camFacing', facing);
+      start();
+    }
+    if (t.closest('[data-timer]')) {
+      timer = TIMERS[(TIMERS.indexOf(timer) + 1) % TIMERS.length];
+      localStorage.setItem('camTimer', String(timer));
+      renderTools();
+    }
+    if (t.closest('[data-ghost]')) {
+      ghost = ghost + 1 >= ghosts.length ? -1 : ghost + 1;
+      renderTools();
+    }
+    if (t.closest('[data-retake]')) closeReview();
+    if (t.closest('[data-use]') && reviewBlob) {
+      onShot(reviewBlob);
+      closeReview();
+      // Next pose: move the ghost to the previous session's next photo.
+      if (ghost >= 0 && ghost + 1 < ghosts.length) ghost += 1;
+      renderTools();
+      toast('Added. Take another or close the camera.');
+    }
+  });
+  window.addEventListener('resize', fit);
+
+  openOverlay(el);
+  start();
 }
 
 // ---------- Backup ----------
