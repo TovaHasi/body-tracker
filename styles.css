@@ -553,3 +553,36 @@ button.row:active, label.row.action:active { background: var(--fill); }
 .as-btn:disabled { color: var(--ter); }
 .bold { font-weight: 600; }
 .saved { color: var(--text); font-weight: 500; }
+
+/* ---------- Left / right ---------- */
+
+.side {
+  margin-right: 3px;
+  font-size: 0.55em;
+  font-weight: 600;
+  color: var(--sec);
+  font-family: -apple-system, system-ui, sans-serif;
+  vertical-align: 0.15em;
+}
+
+.pair-val + .pair-val { margin-left: 12px; }
+.mr-value.paired { font-size: 23px; }
+
+.d-blocks { display: flex; gap: 28px; }
+.d-label { font-size: 13px; font-weight: 600; color: var(--sec); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.legend {
+  display: flex;
+  gap: 18px;
+  margin: -6px 0 14px;
+  font-size: 13px;
+  color: var(--sec);
+}
+
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.lg { width: 22px; border-top: 2.2px solid var(--text); }
+.lg.dashed { border-top-style: dashed; }
+
+.side-input { display: inline-flex; align-items: baseline; gap: 2px; }
+.side-input .side { font-size: 13px; vertical-align: 0; }
+.field input.short { width: 52px; }

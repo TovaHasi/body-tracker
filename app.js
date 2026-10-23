@@ -6,14 +6,21 @@ const METRICS = [
   { key: 'neck', title: 'Neck', unit: 'cm' },
   { key: 'shoulders', title: 'Shoulders', unit: 'cm' },
   { key: 'chest', title: 'Chest', unit: 'cm' },
-  { key: 'biceps', title: 'Biceps', unit: 'cm' },
-  { key: 'forearm', title: 'Forearm', unit: 'cm' },
+  { key: 'biceps', title: 'Biceps', unit: 'cm', paired: true },
+  { key: 'forearm', title: 'Forearm', unit: 'cm', paired: true },
   { key: 'waist', title: 'Waist', unit: 'cm' },
   { key: 'hips', title: 'Hips', unit: 'cm' },
-  { key: 'thigh', title: 'Thigh', unit: 'cm' },
-  { key: 'calf', title: 'Calf', unit: 'cm' },
+  { key: 'thigh', title: 'Thigh', unit: 'cm', paired: true },
+  { key: 'calf', title: 'Calf', unit: 'cm', paired: true },
 ];
 const METRIC = Object.fromEntries(METRICS.map((m) => [m.key, m]));
+
+/** Stored value keys of a metric: paired ones keep Left and Right separately (bicepsL, bicepsR). */
+const seriesKeys = (m) =>
+  m.paired
+    ? [{ key: m.key + 'L', label: 'L', name: 'Left' }, { key: m.key + 'R', label: 'R', name: 'Right', dashed: true }]
+    : [{ key: m.key, label: '', name: '' }];
+const hasMetric = (m, e) => seriesKeys(m).some((s) => e.values[s.key] != null);
 
 const RANGES = [
   { key: '1m', label: '1M', months: 1 },
@@ -144,6 +151,16 @@ function points(key) {
     .map((e) => ({ date: e.date, t: toTime(e.date), v: e.values[key], entry: e }));
 }
 
+function metricSeries(m, rangeKey = 'all') {
+  return seriesKeys(m).map((s) => ({ ...s, pts: inRange(points(s.key), rangeKey) }));
+}
+
+/** "81.9 kg" or "37.4 / 37.1 cm" for one entry. */
+function metricText(m, e, withUnit = true) {
+  const text = seriesKeys(m).map((s) => (e.values[s.key] != null ? fmt(e.values[s.key]) : '—')).join(' / ');
+  return withUnit ? `${text} ${m.unit}` : text;
+}
+
 function inRange(pts, rangeKey) {
   const range = RANGES.find((r) => r.key === rangeKey);
   if (!range?.months) return pts;
@@ -247,69 +264,80 @@ function smoothPath(pts) {
   return d;
 }
 
-function scales(pts, w, h, pad) {
-  const [lo, hi] = domain(pts.map((p) => p.v));
-  const t0 = pts[0].t;
-  const t1 = pts[pts.length - 1].t;
+// A chart takes a list of series: [{ label, name, dashed, pts }]. Paired metrics have Left (solid) and Right (dashed).
+
+function scales(all, w, h, pad) {
+  const [lo, hi] = domain(all.map((p) => p.v));
+  const ts = all.map((p) => p.t);
+  const t0 = Math.min(...ts);
+  const t1 = Math.max(...ts);
   const x = (t) => (t1 === t0 ? pad.l + (w - pad.l - pad.r) / 2 : pad.l + ((t - t0) / (t1 - t0)) * (w - pad.l - pad.r));
   const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (h - pad.t - pad.b);
   return { x, y, lo, hi };
 }
 
-function sparkline(pts) {
+function sparkline(series) {
   const w = 90;
   const h = 36;
-  const { x, y } = scales(pts, w, h, { l: 2, r: 2, t: 3, b: 3 });
-  const xy = pts.map((p) => [x(p.t), y(p.v)]);
-  return `<svg class="spark" viewBox="0 0 ${w} ${h}"><path d="${smoothPath(xy)}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const { x, y } = scales(series.flatMap((s) => s.pts), w, h, { l: 2, r: 2, t: 3, b: 3 });
+  const paths = series
+    .filter((s) => s.pts.length > 1)
+    .map((s) => `<path d="${smoothPath(s.pts.map((p) => [x(p.t), y(p.v)]))}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"${s.dashed ? ' stroke-dasharray="3 4"' : ''}/>`)
+    .join('');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}">${paths}</svg>`;
 }
 
-function mountChart(el, pts, onSelect) {
-  if (!pts.length) {
+function mountChart(el, series, onSelect) {
+  const all = series.flatMap((s) => s.pts);
+  if (!all.length) {
     el.innerHTML = '<div class="chart-empty">No data for this period</div>';
     return;
   }
   const w = el.clientWidth;
   const h = el.clientHeight;
   const pad = { l: 6, r: 40, t: 10, b: 24 };
-  const { x, y, lo, hi } = scales(pts, w, h, pad);
-  const xy = pts.map((p) => [x(p.t), y(p.v)]);
+  const { x, y, lo, hi } = scales(all, w, h, pad);
+  const times = [...new Set(all.map((p) => p.t))].sort((a, b) => a - b);
 
   const step = niceStep((hi - lo) / 3);
   const ticks = [];
   for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) ticks.push(v);
-
   const grid = ticks
     .map((v) => `<line x1="${pad.l}" x2="${w - pad.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--sep)" stroke-width="0.5"/>
       <text x="${w - pad.r + 6}" y="${y(v) + 4}">${fmt(v)}</text>`)
     .join('');
 
-  const first = pts[0];
-  const last = pts[pts.length - 1];
-  const xLabels = `<text x="${pad.l}" y="${h - 4}">${fmtDateShort(first.date)}</text>` +
-    (pts.length > 1 ? `<text x="${w - pad.r}" y="${h - 4}" text-anchor="end">${fmtDateShort(last.date)}</text>` : '');
+  const dateOf = (t) => isoDate(new Date(t));
+  const xLabels = `<text x="${pad.l}" y="${h - 4}">${fmtDateShort(dateOf(times[0]))}</text>` +
+    (times.length > 1 ? `<text x="${w - pad.r}" y="${h - 4}" text-anchor="end">${fmtDateShort(dateOf(times[times.length - 1]))}</text>` : '');
 
-  const line = pts.length > 1
-    ? `<path d="${smoothPath(xy)}" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`
-    : '';
-  const dots = pts.length <= 30
-    ? xy.map(([cx, cy]) => `<circle cx="${cx}" cy="${cy}" r="3" fill="var(--text)"/>`).join('')
-    : '';
+  const marks = series.map((s) => {
+    const xy = s.pts.map((p) => [x(p.t), y(p.v)]);
+    const line = xy.length > 1
+      ? `<path d="${smoothPath(xy)}" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"${s.dashed ? ' stroke-dasharray="5 5"' : ''}/>`
+      : '';
+    const dots = xy.length <= 30
+      ? xy.map(([cx, cy]) => s.dashed
+        ? `<circle cx="${cx}" cy="${cy}" r="2.6" fill="var(--card)" stroke="var(--text)" stroke-width="1.6"/>`
+        : `<circle cx="${cx}" cy="${cy}" r="3" fill="var(--text)"/>`).join('')
+      : '';
+    return line + dots;
+  }).join('');
 
-  el.innerHTML = `<svg>${grid}${xLabels}${line}${dots}<g class="sel"></g></svg>`;
+  el.innerHTML = `<svg>${grid}${xLabels}${marks}<g class="sel"></g></svg>`;
   const svg = el.querySelector('svg');
   const sel = el.querySelector('.sel');
 
   const pick = (clientX) => {
     const px = clientX - svg.getBoundingClientRect().left;
-    let best = 0;
-    xy.forEach(([cx], i) => {
-      if (Math.abs(cx - px) < Math.abs(xy[best][0] - px)) best = i;
-    });
-    const [cx, cy] = xy[best];
-    sel.innerHTML = `<line x1="${cx}" x2="${cx}" y1="${pad.t}" y2="${h - pad.b}" stroke="var(--ter)" stroke-width="1"/>
-      <circle cx="${cx}" cy="${cy}" r="6" fill="var(--text)" stroke="var(--card)" stroke-width="2"/>`;
-    onSelect(pts[best]);
+    const t = times.reduce((best, cur) => (Math.abs(x(cur) - px) < Math.abs(x(best) - px) ? cur : best));
+    const dots = series
+      .map((s) => s.pts.find((p) => p.t === t))
+      .filter(Boolean)
+      .map((p) => `<circle cx="${x(t)}" cy="${y(p.v)}" r="6" fill="var(--text)" stroke="var(--card)" stroke-width="2"/>`)
+      .join('');
+    sel.innerHTML = `<line x1="${x(t)}" x2="${x(t)}" y1="${pad.t}" y2="${h - pad.b}" stroke="var(--ter)" stroke-width="1"/>${dots}`;
+    onSelect(t);
   };
   const clear = () => {
     sel.innerHTML = '';
@@ -334,22 +362,34 @@ function emptyState(title, text) {
     <button class="pill" data-action="new-entry">Add entry</button></div>`;
 }
 
+const sideTag = (s) => (s.label ? `<span class="side">${s.label}</span>` : '');
+
+/** "L +1.2 · R +0.9 cm" for the series that have at least two points. */
+function changeText(m, series, suffix) {
+  const parts = series
+    .filter((s) => s.pts.length > 1)
+    .map((s) => `${s.label ? s.label + ' ' : ''}${fmtSigned(s.pts[s.pts.length - 1].v - s.pts[0].v)}`);
+  return parts.length ? `${parts.join(' · ')} ${m.unit} ${suffix}` : '';
+}
+
 function viewProgress() {
-  const metrics = METRICS.filter((m) => state.entries.some((e) => e.values[m.key] != null));
+  const metrics = METRICS.filter((m) => state.entries.some((e) => hasMetric(m, e)));
   if (!metrics.length) {
     return { title: 'Progress', large: true, actions: plusButton, body: emptyState('No entries yet', 'Add your first measurements to start tracking') };
   }
   const rows = metrics.map((m) => {
-    const pts = points(m.key);
-    const last = pts[pts.length - 1];
-    const delta = pts.length > 1 ? last.v - pts[0].v : null;
+    const series = metricSeries(m).filter((s) => s.pts.length);
+    const value = series
+      .map((s) => `<span class="pair-val">${sideTag(s)}${fmt(s.pts[s.pts.length - 1].v)}</span>`)
+      .join('');
+    const delta = changeText(m, series, 'since start');
     return `<button class="row metric-row" data-action="open-metric" data-key="${m.key}">
       <div class="grow">
         <div class="mr-title">${m.title}</div>
-        <div class="mr-value">${fmt(last.v)}<span class="unit">${m.unit}</span></div>
-        ${delta != null ? `<div class="mr-delta">${fmtSigned(delta)} ${m.unit} since start</div>` : ''}
+        <div class="mr-value ${m.paired ? 'paired' : ''}">${value}<span class="unit">${m.unit}</span></div>
+        ${delta ? `<div class="mr-delta">${delta}</div>` : ''}
       </div>
-      ${pts.length > 1 ? sparkline(pts) : ''}
+      ${series.some((s) => s.pts.length > 1) ? sparkline(series) : ''}
       <span class="chev"></span>
     </button>`;
   });
@@ -358,38 +398,62 @@ function viewProgress() {
 
 function viewMetric(key) {
   const m = METRIC[key];
-  const all = points(key);
-  const pts = inRange(all, state.range);
-  const last = pts[pts.length - 1];
-  const change = pts.length > 1 ? last.v - pts[0].v : null;
-  const changeText = change != null ? `${fmtSigned(change)} ${m.unit} this period` : '';
+  const series = metricSeries(m, state.range);
+  const all = series.flatMap((s) => s.pts);
+  const latestT = all.length ? Math.max(...all.map((p) => p.t)) : null;
+  const periodChange = changeText(m, series, 'this period');
 
+  const blocks = series
+    .map((s, i) => `
+      <div class="d-block">
+        ${s.name ? `<div class="d-label">${s.name}</div>` : ''}
+        <div class="d-value"><span id="d-v${i}">—</span><span class="unit">${m.unit}</span></div>
+      </div>`)
+    .join('');
+  const legend = m.paired
+    ? `<div class="legend">${series.map((s) => `<span><i class="lg ${s.dashed ? 'dashed' : ''}"></i>${s.name}</span>`).join('')}</div>`
+    : '';
+
+  const entries = entriesDesc().filter((e) => hasMetric(m, e));
   const body = `
     <div class="group detail">
-      <div class="d-value"><span id="d-value">${last ? fmt(last.v) : '—'}</span><span class="unit">${m.unit}</span></div>
-      <div class="d-sub" id="d-date">${last ? fmtDate(last.date) : ''}</div>
-      <div class="d-sub" id="d-change">${changeText}</div>
+      <div class="d-blocks">${blocks}</div>
+      <div class="d-sub" id="d-date"></div>
+      <div class="d-sub" id="d-change"></div>
       <div class="chart" id="chart"></div>
+      ${legend}
       <div class="segmented">
         ${RANGES.map((r) => `<button data-action="range" data-range="${r.key}" class="${r.key === state.range ? 'on' : ''}">${r.label}</button>`).join('')}
       </div>
     </div>
     <div class="group-title">History</div>
     <div class="group">
-      ${[...all].reverse().map((p) => `
-        <button class="row" data-action="edit-entry" data-id="${p.entry.id}">
-          <span class="grow">${fmtDate(p.date)}</span>
-          <span class="sec num">${fmt(p.v)} ${m.unit}</span>
+      ${entries.map((e) => `
+        <button class="row" data-action="edit-entry" data-id="${e.id}">
+          <span class="grow">${fmtDate(e.date)}</span>
+          <span class="sec num">${metricText(m, e)}</span>
         </button>`).join('')}
     </div>`;
 
-  const after = () =>
-    mountChart($('#chart'), pts, (p) => {
-      const shown = p || last;
-      $('#d-value').textContent = shown ? fmt(shown.v) : '—';
-      $('#d-date').textContent = shown ? fmtDate(shown.date) : '';
-      $('#d-change').textContent = p ? '' : changeText;
+  // Shows the selected date, or the latest values when nothing is selected.
+  const show = (t) => {
+    const values = series.map((s) => {
+      if (t != null) return s.pts.find((p) => p.t === t)?.v ?? null;
+      return s.pts.length ? s.pts[s.pts.length - 1].v : null;
     });
+    values.forEach((v, i) => {
+      $(`#d-v${i}`).textContent = v != null ? fmt(v) : '—';
+    });
+    const when = t ?? latestT;
+    $('#d-date').textContent = when != null ? fmtDate(isoDate(new Date(when))) : '';
+    const gap = m.paired && values.every((v) => v != null) ? `Difference ${fmt(Math.abs(values[0] - values[1]))} ${m.unit}` : '';
+    $('#d-change').textContent = [t == null ? periodChange : '', gap].filter(Boolean).join(' · ');
+  };
+
+  const after = () => {
+    show(null);
+    mountChart($('#chart'), series, show);
+  };
 
   return { title: m.title, back: true, body, after };
 }
@@ -424,8 +488,8 @@ function viewHistory() {
     return { title: 'Log', large: true, actions: plusButton, body: emptyState('No entries yet', 'All your measurements will show up here') + '<div style="height:32px"></div>' + backup };
   }
   const rows = entries.map((e) => {
-    const summary = METRICS.filter((m) => e.values[m.key] != null)
-      .map((m) => `${m.title.toLowerCase()} ${fmt(e.values[m.key])}`)
+    const summary = METRICS.filter((m) => hasMetric(m, e))
+      .map((m) => `${m.title.toLowerCase()} ${metricText(m, e, false)}`)
       .join(' · ');
     const photo = photosOf(e.id)[0];
     return `<button class="row" data-action="edit-entry" data-id="${e.id}">
@@ -527,14 +591,21 @@ function openEditor(entry) {
       </div>
       <div class="group-title">Measurements</div>
       <div class="group">
-        ${METRICS.map((m) => `
-          <label class="row field">
+        ${METRICS.map((m) => {
+          const input = (k, cls = '') => `<input inputmode="decimal" autocomplete="off" data-m="${k}" class="${cls}"
+              value="${entry?.values[k] != null ? String(entry.values[k]) : ''}"
+              placeholder="${previous?.values[k] != null ? fmt(previous.values[k]) : '—'}">`;
+          if (!m.paired) {
+            return `<label class="row field"><span class="grow">${m.title}</span>${input(m.key)}<span class="unit">${m.unit}</span></label>`;
+          }
+          const [l, r] = seriesKeys(m);
+          return `<div class="row field">
             <span class="grow">${m.title}</span>
-            <input inputmode="decimal" autocomplete="off" data-m="${m.key}"
-              value="${entry?.values[m.key] != null ? String(entry.values[m.key]) : ''}"
-              placeholder="${previous?.values[m.key] != null ? fmt(previous.values[m.key]) : '—'}">
+            <label class="side-input"><span class="side">L</span>${input(l.key, 'short')}</label>
+            <label class="side-input"><span class="side">R</span>${input(r.key, 'short')}</label>
             <span class="unit">${m.unit}</span>
-          </label>`).join('')}
+          </div>`;
+        }).join('')}
       </div>
       <div class="group-title">Photos</div>
       <div class="group">
@@ -675,7 +746,7 @@ function openEditor(entry) {
       ids.forEach(dropUrls);
       state.entries = state.entries.filter((x) => x.id !== entry.id);
       state.photos = state.photos.filter((p) => !ids.includes(p.id));
-      if (state.metric && !state.entries.some((x) => x.values[state.metric] != null)) state.metric = null;
+      if (state.metric && !state.entries.some((x) => hasMetric(METRIC[state.metric], x))) state.metric = null;
       close();
       render();
     }
@@ -1067,6 +1138,23 @@ $('#app').addEventListener('change', (e) => {
 
 async function loadState() {
   [state.entries, state.photos] = await Promise.all([getAll('entries'), getAll('photos')]);
+  await migrateSides();
+}
+
+/** Older versions stored one value for paired metrics; it becomes both Left and Right. */
+async function migrateSides() {
+  const changed = [];
+  for (const e of state.entries) {
+    for (const m of METRICS.filter((x) => x.paired)) {
+      const v = e.values[m.key];
+      if (v == null) continue;
+      e.values[m.key + 'L'] ??= v;
+      e.values[m.key + 'R'] ??= v;
+      delete e.values[m.key];
+      if (!changed.includes(e)) changed.push(e);
+    }
+  }
+  if (changed.length) await write((s) => changed.forEach((e) => s.entries.put(e)));
 }
 
 async function start() {
