@@ -100,6 +100,10 @@ Plain HTML, CSS and JavaScript, with no framework, build step or dependencies.
 - **Charts** are hand-drawn SVG: smoothed lines, a 7-day exponential moving average for the weight trend, and a least-squares slope for the weekly rate.
 - **Camera** uses `getUserMedia`. Front camera shots are saved mirrored, as previewed, so the ghost overlay always lines up.
 
+## Feedback
+
+Found a bug or have an idea? [Open an issue](https://github.com/TovaHasi/body-tracker/issues/new/choose). For bugs, include your iPhone model, iOS version and a screenshot if you can. You can also get there from the app: **Log → Send feedback**.
+
 ## Run locally
 
 ```sh
@@ -109,3 +113,7 @@ python3 -m http.server 8765
 Open http://localhost:8765 for the app, or http://localhost:8765/?demo for the demo. When you change files, bump `CACHE` in `sw.js` so the offline cache refreshes.
 
 The [`ios/`](ios/) folder holds an early native SwiftUI version. The web app doesn't need it.
+
+## License
+
+[MIT](LICENSE). You're free to use, change and share the code.

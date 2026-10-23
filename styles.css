@@ -925,3 +925,7 @@ button.row:active, label.row.action:active { background: var(--fill); }
   .tabbar { left: 50%; right: auto; width: 480px; transform: translateX(-50%); }
   .sheet, .picker { left: 50%; right: auto; width: 480px; margin-left: -240px; }
 }
+
+a.row { color: var(--text); text-decoration: none; }
+a.row:active { background: var(--fill); }
+.ext { color: var(--ter); font-weight: 400; }

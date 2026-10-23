@@ -571,7 +571,13 @@ function viewHistory() {
             <span class="chev"></span>
           </button>`).join('')}
       </div>
-      <div class="group-foot">Save a month to Photos or Files as regular images, or as a backup file you can import later.</div>` : ''}`;
+      <div class="group-foot">Save a month to Photos or Files as regular images, or as a backup file you can import later.</div>` : ''}
+    <div class="group-title">About</div>
+    <div class="group">
+      <a class="row action" href="https://github.com/TovaHasi/body-tracker/issues/new/choose" target="_blank" rel="noopener">Send feedback<span class="grow"></span><span class="ext">↗</span></a>
+      <a class="row action" href="https://github.com/TovaHasi/body-tracker" target="_blank" rel="noopener">Source code<span class="grow"></span><span class="ext">↗</span></a>
+    </div>
+    <div class="group-foot">Feedback opens GitHub in Safari. Your data isn't sent anywhere.</div>`;
 
   const entries = entriesDesc();
   if (!entries.length) {
