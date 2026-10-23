@@ -50,6 +50,13 @@ const ICONS = {
 
 // ---------- Helpers ----------
 
+// ?demo opens a separate database pre-filled with sample data.
+const DEMO = new URLSearchParams(location.search).has('demo');
+const ls = {
+  get: (k) => localStorage.getItem(DEMO ? 'demo:' + k : k),
+  set: (k, v) => localStorage.setItem(DEMO ? 'demo:' + k : k, v),
+};
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
@@ -98,7 +105,7 @@ let db;
 
 function openDB() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('body-tracker', 1);
+    const request = indexedDB.open(DEMO ? 'body-tracker-demo' : 'body-tracker', 1);
     request.onupgradeneeded = () => {
       const d = request.result;
       d.createObjectStore('entries', { keyPath: 'id' });
@@ -542,7 +549,7 @@ function viewMetric(key) {
 }
 
 function viewHistory() {
-  const lastExport = Number(localStorage.getItem('lastExport')) || null;
+  const lastExport = Number(ls.get('lastExport')) || null;
   const months = photoMonths();
   const backup = `
     <div class="group-title">Backup</div>
@@ -619,7 +626,7 @@ function render() {
     : '';
   $('#app').innerHTML = `
     <header class="topbar ${view.large ? 'flat' : ''}">
-      <div class="tb-left">${back}</div>
+      <div class="tb-left">${back || (DEMO ? '<button class="demo-chip" data-action="reset-demo">Demo</button>' : '')}</div>
       <div class="tb-title">${view.large ? '' : view.title}</div>
       <div class="tb-right">${view.actions || ''}</div>
     </header>
@@ -1136,7 +1143,7 @@ function openCompare() {
   // Oldest vs newest session, both starting from that session's first shot (same pose).
   const lastEntryId = photos[photos.length - 1].entryId;
   const starts = [0, photos.findIndex((p) => p.entryId === lastEntryId)];
-  let mode = localStorage.getItem('compareMode') || 'side';
+  let mode = ls.get('compareMode') || 'side';
 
   const el = document.createElement('div');
   el.className = 'viewer';
@@ -1235,7 +1242,7 @@ function openCompare() {
 
   const setMode = (next) => {
     mode = next;
-    localStorage.setItem('compareMode', mode);
+    ls.set('compareMode', mode);
     el.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
     panes.hidden = mode !== 'side';
     sliderView.hidden = mode !== 'slider';
@@ -1288,8 +1295,8 @@ const TIMERS = [0, 3, 10];
 
 /** ghosts: [{ load: () => Promise<url>, date }] — photos from the previous session. onShot(blob) per accepted shot. */
 function openCamera({ ghosts, onShot }) {
-  let facing = localStorage.getItem('camFacing') || 'user';
-  let timer = Number(localStorage.getItem('camTimer')) || 0;
+  let facing = ls.get('camFacing') || 'user';
+  let timer = Number(ls.get('camTimer')) || 0;
   let ghost = ghosts.length ? 0 : -1;
   let stream = null;
   let shooting = false;
@@ -1423,12 +1430,12 @@ function openCamera({ ghosts, onShot }) {
     if (t.closest('[data-shoot]')) shoot();
     if (t.closest('[data-flip]')) {
       facing = facing === 'user' ? 'environment' : 'user';
-      localStorage.setItem('camFacing', facing);
+      ls.set('camFacing', facing);
       start();
     }
     if (t.closest('[data-timer]')) {
       timer = TIMERS[(TIMERS.indexOf(timer) + 1) % TIMERS.length];
-      localStorage.setItem('camTimer', String(timer));
+      ls.set('camTimer', String(timer));
       renderTools();
     }
     if (t.closest('[data-ghost]')) {
@@ -1473,7 +1480,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function readJSON(key) {
   try {
-    return JSON.parse(localStorage.getItem(key)) || {};
+    return JSON.parse(ls.get(key)) || {};
   } catch {
     return {};
   }
@@ -1497,7 +1504,7 @@ function photoMonths() {
 function markMonthSaved(key) {
   const saved = readJSON('photoBackups');
   saved[key] = Date.now();
-  localStorage.setItem('photoBackups', JSON.stringify(saved));
+  ls.set('photoBackups', JSON.stringify(saved));
 }
 
 async function share(files) {
@@ -1560,7 +1567,7 @@ function exportMeasurements() {
   const file = new File([JSON.stringify(payload)], `body-tracker-measurements-${today()}.json`, { type: 'application/json' });
   share([file])
     .then(() => {
-      localStorage.setItem('lastExport', String(Date.now()));
+      ls.set('lastExport', String(Date.now()));
       render();
     })
     .catch((err) => err.name !== 'AbortError' && toast('Couldn’t save the file'));
@@ -1706,6 +1713,7 @@ const actions = {
   'open-photo': ({ id }) => openPhoto(id),
   compare: () => openCompare(),
   'export-measurements': () => exportMeasurements(),
+  'reset-demo': () => resetDemo(),
   'month-backup': ({ month }) => openMonthSheet(month),
 };
 
@@ -1743,10 +1751,33 @@ async function migrateSides() {
   if (changed.length) await write((s) => changed.forEach((e) => s.entries.put(e)));
 }
 
+async function seedDemo() {
+  const demo = await import('./demo.js');
+  await demo.seedDemo(write);
+  await loadState();
+}
+
+async function resetDemo() {
+  if (!confirm('This is a demo with sample data. Reset it to the original sample?')) return;
+  await write((s) => {
+    s.entries.clear();
+    s.photos.clear();
+    s.fulls.clear();
+  });
+  for (const url of urls.values()) URL.revokeObjectURL(url);
+  urls.clear();
+  await loadState();
+  await seedDemo();
+  state.metric = null;
+  render();
+  toast('Demo reset');
+}
+
 async function start() {
   try {
     db = await openDB();
     await loadState();
+    if (DEMO && !state.entries.length) await seedDemo();
   } catch (err) {
     console.error(err);
     $('#app').innerHTML = '<div class="empty"><h2>Storage unavailable</h2><p>Safari blocked access to storage. Don’t use Private Browsing.</p></div>';

@@ -1,10 +1,11 @@
 // Bump on every deploy so the new shell gets precached.
-const CACHE = 'body-tracker-v9';
+const CACHE = 'body-tracker-v10';
 const ASSETS = [
   './',
   'index.html',
   'styles.css',
   'app.js',
+  'demo.js',
   'manifest.webmanifest',
   'icons/icon-180.png',
   'icons/icon-192.png',

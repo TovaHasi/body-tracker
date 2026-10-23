@@ -908,3 +908,20 @@ button.row:active, label.row.action:active { background: var(--fill); }
 
 .pk-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .pk-thumb.on { box-shadow: 0 0 0 2px #111113, 0 0 0 4px #fff; }
+
+.demo-chip {
+  margin-left: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--fill);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sec);
+}
+
+/* On a computer, keep the phone-width layout centred instead of stretching it. */
+@media (min-width: 700px) {
+  #app { max-width: 480px; margin: 0 auto; }
+  .tabbar { left: 50%; right: auto; width: 480px; transform: translateX(-50%); }
+  .sheet, .picker { left: 50%; right: auto; width: 480px; margin-left: -240px; }
+}
