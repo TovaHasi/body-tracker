@@ -599,7 +599,7 @@ function openEditor(entry) {
             return `<label class="row field"><span class="grow">${m.title}</span>${input(m.key)}<span class="unit">${m.unit}</span></label>`;
           }
           const [l, r] = seriesKeys(m);
-          return `<div class="row field">
+          return `<div class="row field paired">
             <span class="grow">${m.title}</span>
             <label class="side-input"><span class="side">L</span>${input(l.key, 'short')}</label>
             <label class="side-input"><span class="side">R</span>${input(r.key, 'short')}</label>

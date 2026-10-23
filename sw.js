@@ -1,5 +1,5 @@
 // Bump on every deploy so the new shell gets precached.
-const CACHE = 'body-tracker-v5';
+const CACHE = 'body-tracker-v6';
 const ASSETS = [
   './',
   'index.html',
